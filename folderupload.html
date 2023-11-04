@@ -162,6 +162,23 @@ function delfile(path)
 	}
 	req.send();
 }
+function folderWalk(name)
+{
+	if(list_path.length)
+		list_path += '/';
+	list_path += name;
+	updateList();
+}
+function folderUp()
+{
+	var i = list_path.lastIndexOf('/');
+	writelog(i);
+	synclog();
+	list_path = i >= 0?list_path.substring(0,i):"";
+	updateList();
+}
+
+
 function updateList()
 {
 	writelog(list_path);
@@ -176,15 +193,13 @@ function updateList()
 
 
 			if ((status === 0 || (status >= 200 && status < 400))) {
-				var i = list_path.lastIndexOf('/');
-				var str1 = i >= 0?list_path.substring(i):"";
-				var str = "<a  onclick=\"list_path = '"+str1+"';updateList();\">..</a><br>"
+				var str = "<a  onclick=\"folderUp();\">..</a><br>"
 				for(item of JSON.parse(req.responseText))
 				{
 					if(item.type == 1)
 					str += "<a href=\"/data/"+list_path+(list_path.length >0?"/":"")+item.name+"\">"+item.name+" ("+item.size+")</a><a onclick=\"delfile('/data/"+list_path+(list_path.length >0?"/":"")+item.name+"')\">del</a><br>";
 					else if(item.type == 0)
-						str += "<a onclick=\"list_path += '"+item.name+"';updateList();\">"+item.name+"</a><br>";
+						str += "<a onclick=\"folderWalk('"+item.name+"');\">"+item.name+"</a><br>";
 				}
 				document.getElementById("filelist").innerHTML=str;
 				
