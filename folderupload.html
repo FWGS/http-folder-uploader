@@ -1,0 +1,208 @@
+<html>
+<head>
+<title>upload test</title>
+<script>
+var globallog = ""
+function synclog()
+{
+    document.getElementById("pagelog").innerHTML = globallog;
+}
+
+function writelog(text)
+{
+    if(globallog.length > 4096)
+        globallog = globallog.substring(4096);
+    globallog += ""+text+"\n";
+    //document.getElementById("pagelog").innerText = log
+}
+
+</script>
+</head>
+<body onerror = "writelog(event);synclog();">
+ <input
+      type="file"
+      directory="directory"
+      multiple
+      webkitdirectory="webkitdirectory"
+      id="files"
+    />
+<textarea id="pagelog"></textarea>
+<div id="dropcontainer" style="border:1px solid black;height:100px;width:100px">
+   Drop Here
+</div>
+<div id="filelist"></div>
+<script>
+var dropContainer = document.getElementById("dropcontainer")
+dropContainer.ondragover = dropContainer.ondragenter = function(evt) {
+	evt.preventDefault();
+};
+dropContainer.ondrop = function(event) {
+	event.preventDefault();
+	processDTItems(event.dataTransfer.items).then(function(files){
+		processFiles(files);
+	});
+};
+
+function resolveFile(resolve, item, path, fileList)
+{
+	item.file(function(file) {
+		file.filepath = path + file.name; //save full path
+		fileList.push(file);
+		resolve(file);
+	});
+}
+
+function resolveDir(resolve, item, path, fileList)
+{
+	var dirReader = item.createReader();
+	dirReader.readEntries(function(entries){
+		var entriesPromises = [];
+		for (var entr of entries)
+			entriesPromises.push(traverseItems(entr, (path ? path :"") + item.name + "/", fileList));
+		resolve(Promise.all(entriesPromises));
+	});
+}
+
+function resolveItem(resolve, item, path, fileList)
+{
+	if (item.isFile)
+		resolveFile(resolve, item, path, fileList);
+	else if (item.isDirectory)
+		resolveDir(resolve, item, path, fileList);
+}
+
+function traverseItems(item, path, fileList)
+{
+	return new Promise(function(resolve){
+		resolveItem(resolve, item, path, fileList);
+	});
+}
+
+function processDTItems(dataTransferItems)
+{
+	var files = [];
+	return new Promise(function(resolve, reject){
+	var entriesPromises = [];
+		for (var it of dataTransferItems)
+			entriesPromises.push(traverseItems(it.webkitGetAsEntry(), "", files));
+		Promise.all(entriesPromises).then(function(entries){
+			resolve(files);
+		});
+	});
+}
+
+var pendingfiles = [];
+var uploadingfiles = [];
+
+var list_path = "";
+
+function uploadFile(file)
+{
+	uploadingfiles.push(file);
+	var req = new XMLHttpRequest();
+	var path = (file.filepath|| file.webkitRelativePath);
+	//writelog("uploading:"+path);
+	req.open("PUT", "/data/"+list_path+(list_path.length >0?"/":"")+path, true);
+	req.onreadystatechange = function(){
+		//writelog("readyState("+path+"):"+req.readyState);
+		if (req.readyState === XMLHttpRequest.DONE) {
+			const status = req.status;
+			//writelog("status("+path+"):"+status);
+
+
+			if ((status === 0 || (status >= 200 && status < 400)) && req.responseText == 'OK' ) {
+
+			} else {
+				pendingfiles.push(file);
+				writelog("error:"+path);
+				synclog();
+			}
+			var index = uploadingfiles.indexOf(file);
+			if(index >= 0)
+			uploadingfiles.splice(index, 1);
+			scheduleUpload();
+		}
+	}
+	req.send(file)
+}
+
+function scheduleUpload()
+{
+	while(uploadingfiles.length < 16 && pendingfiles.length > 0)
+	{
+		uploadFile(pendingfiles.pop())
+	}
+	if(uploadingfiles.length == 0 && pendingfiles.length == 0)
+		alert("upload done!");
+}
+
+function processFiles(files)
+{
+	/*for(var file of files)
+		writelog(file.filepath|| file.webkitRelativePath);
+	var req = new XMLHttpRequest();
+	req.open("PUT", "/data/"+(file.filepath|| file.webkitRelativePath), true);
+	console.log(file.size);
+	req.send(file)
+	synclog();*/
+	pendingfiles = Array.prototype.slice.call(files);
+	scheduleUpload();
+}
+function delfile(path)
+{
+	if(!confirm("Delete "+path))
+		return;
+	var req = new XMLHttpRequest();
+	req.open("DELETE", path, true);
+	req.onreadystatechange = function(){
+		//writelog("readyState("+path+"):"+req.readyState);
+		if (req.readyState === XMLHttpRequest.DONE) {
+			updateList();
+		}
+	}
+	req.send();
+}
+function updateList()
+{
+	writelog(list_path);
+	synclog();
+	var req = new XMLHttpRequest();
+	req.open("GET", "/list/"+list_path, true);
+	req.onreadystatechange = function(){
+		//writelog("readyState("+path+"):"+req.readyState);
+		if (req.readyState === XMLHttpRequest.DONE) {
+			const status = req.status;
+			//writelog("status("+path+"):"+status);
+
+
+			if ((status === 0 || (status >= 200 && status < 400))) {
+				var i = list_path.lastIndexOf('/');
+				var str1 = i >= 0?list_path.substring(i):"";
+				var str = "<a  onclick=\"list_path = '"+str1+"';updateList();\">..</a><br>"
+				for(item of JSON.parse(req.responseText))
+				{
+					if(item.type == 1)
+					str += "<a href=\"/data/"+list_path+(list_path.length >0?"/":"")+item.name+"\">"+item.name+" ("+item.size+")</a><a onclick=\"delfile('/data/"+list_path+(list_path.length >0?"/":"")+item.name+"')\">del</a><br>";
+					else if(item.type == 0)
+						str += "<a onclick=\"list_path += '"+item.name+"';updateList();\">"+item.name+"</a><br>";
+				}
+				document.getElementById("filelist").innerHTML=str;
+				
+
+			} else {
+			}
+		}
+	}
+	req.send();
+	
+}
+updateList();
+document.getElementById("files").addEventListener("input", function(e) {
+	processFiles(document.getElementById("files").files);
+});
+
+</script>
+
+
+</body>
+</head>
