@@ -260,7 +260,7 @@ int main() {
 				fd = open(path, O_CREAT | O_WRONLY, 0666);
 				write(fd, buffer + he, valread - he);
 				filelen = valread - he;
-				printf("transfer0 %d\n",(int)valread);
+				//printf("transfer0 %d\n",(int)valread);
 				while( filelen < clen )
 				{
 					int readlen = clen - filelen;
@@ -270,12 +270,12 @@ int main() {
 					if(valread > 0)
 					{
 						filelen += valread;
-						printf("transfer %d\n",(int)valread);
+						//printf("transfer %d\n",(int)valread);
 						write(fd, buffer, valread);
 					}
 					else break;
 				}
-				printf("done %s\n", path);
+				//printf("done %s\n", path);
 				close(fd);
 				const char resp_ok[] = "HTTP/1.0 200 OK\r\n"
 								   "Server: webserver-c\r\n"
