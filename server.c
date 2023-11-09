@@ -1,4 +1,6 @@
 // webserver.c
+// strcasestr
+#define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
 #include <stdio.h>
@@ -163,7 +165,7 @@ void serve_list(const char *path, char *buffer, int fd)
 }
 
 int main() {
-	char buffer[BUFFER_SIZE];
+	char buffer[BUFFER_SIZE] = { };
 
 	// Create a socket
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -235,9 +237,9 @@ int main() {
 
 		// Read the request
 		char method[BUFFER_SIZE], uri[BUFFER_SIZE], version[BUFFER_SIZE];
-		const char *contentlength;
+		const char *contentlength = strcasestr(buffer, "content-length: ");
 		int clen = 0;
-		if((contentlength = strcasestr(buffer, "content-length: ")))
+		if(contentlength)
 		{
 			clen = atoi(contentlength + sizeof("content-length: ") - 1);
 		}
