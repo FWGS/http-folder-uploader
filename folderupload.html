@@ -3,9 +3,12 @@
 <title>upload test</title>
 <script>
 var globallog = ""
+var pagelog;
 function synclog()
 {
-    document.getElementById("pagelog").innerHTML = globallog;
+    if(!pagelog)
+	pagelog = document.getElementById("pagelog");
+    pagelog.value = globallog;
 }
 
 function writelog(text)
@@ -75,17 +78,28 @@ color: #FFC;
   padding: 20px; }
 
 </style>
-<header><input
+<header><div style="position:absolute;overflow:hidden" id="pathdisplay"></div><div style="position:absolute;right:0px;overflow:hidden" id="pathdisplay"><button id="upload" style="width:100px" disabled>Upload</button>Dir:<input
       type="file"
       directory="directory"
       multiple
       webkitdirectory="webkitdirectory"
       id="files"
-    /></header>
-<div class=sidebar><div id="filelist"></div></div>
-<div class=main>
-<div id="dropcontainer" style="border:1px solid black;">Drop here</div><textarea id="pagelog" width="100%" height="100%"></textarea>
-  </div>
+    />File:
+<input
+      type="file"
+      multiple
+      id="file"
+    />Zip:<input type="file" id="zipfile"/>
+</div>
+</header>
+<div class="sidebar"><div id="filelist"></div></div>
+<div class="main" id="uploadcontainer">	
+<div id="dropcontainer" style="border:1px solid black;width:100%;height:50%;">Drop here</div><textarea id="pagelog"  style="width:100%;height:50%;resize:none;"></textarea>
+</div>
+<div id="editorcontainer" class="main" style="padding-bottom:40px;overflow:hidden;display:none">
+<button onclick="saveEdit();">Save</button><button onclick="cancelEdit();">Cancel</button><br/>
+<textarea id="editor" style="width:100%;height:100%;resize:none;"></textarea>
+</div>	
 </div>
 
 
@@ -150,6 +164,7 @@ function processDTItems(dataTransferItems)
 }
 
 var pendingfiles = [];
+var selectedfiles = [];
 var uploadingfiles = [];
 
 var list_path = "";
@@ -158,8 +173,9 @@ function uploadFile(file)
 {
 	uploadingfiles.push(file);
 	var req = new XMLHttpRequest();
-	var path = (file.filepath|| file.webkitRelativePath);
-	//writelog("uploading:"+path);
+	var path = (file.filepath|| file.webkitRelativePath || file.name);
+	writelog("uploading:"+path);
+	synclog();
 	req.open("PUT", "/data/"+list_path+(list_path.length >0?"/":"")+path, true);
 	req.onreadystatechange = function(){
 		//writelog("readyState("+path+"):"+req.readyState);
@@ -183,6 +199,22 @@ function uploadFile(file)
 	}
 	req.send(file)
 }
+var last_update = new Date();
+function updateStatus()
+{
+	var now = new Date();
+	if(now - last_update > 400)
+	{
+		last_update = now;
+		var count = pendingfiles.length;
+		var status = "Files left: " + count + "\nUploading now:\n" ;
+		for(file of uploadingfiles)
+			status += (file.filepath|| file.webkitRelativePath|| file.name) + "\n";
+		dropContainer.innerText = status;
+	}
+}
+
+
 
 function scheduleUpload()
 {
@@ -190,8 +222,13 @@ function scheduleUpload()
 	{
 		uploadFile(pendingfiles.pop())
 	}
+	updateStatus();
 	if(uploadingfiles.length == 0 && pendingfiles.length == 0)
+	{
 		alert("upload done!");
+		resetSelection();
+		updateList();
+	}
 }
 
 function processFiles(files)
@@ -203,9 +240,31 @@ function processFiles(files)
 	console.log(file.size);
 	req.send(file)
 	synclog();*/
-	pendingfiles = Array.prototype.slice.call(files);
+	if(pendingfiles.length)
+		return;	
+	selectedfiles = Array.prototype.slice.call(files);
+	var len = files.length;
+	uploadButton.disabled = false;
+	dropContainer.innerText = "" + len + " files selected, click \"Upload\" to start now!";
+}
+
+function startUpload()
+{
+	pendingfiles = selectedfiles;
+	uploadButton.disabled = true;
+	uploadButton.innerText = "Upload";
+	if(oldFileList)
+		fileListContainer.removeChild(oldFileList);
+	oldFileList = null;
 	scheduleUpload();
 }
+
+function resetSelection()
+{
+	dropContainer.innerText = "Drop here";
+	selectedFiles = [];
+}
+
 function delfile(path)
 {
 	if(!confirm("Delete "+path))
@@ -238,7 +297,10 @@ function folderUp()
 
 var oldFileList = null;
 var fileListContainer = document.getElementById("filelist");
-
+var pathDisplay = document.getElementById("pathdisplay");
+var uploadButton = document.getElementById("upload");
+var editorContainer = document.getElementById("editorcontainer");
+var uploadContainer = document.getElementById("uploadcontainer");
 function folderClick(event)
 {
 	folderWalk(event.target.innerText);
@@ -248,11 +310,97 @@ function delClick(event)
 {
 	delfile(event.target.data);
 }
-function updateList()
+var editpath = "";
+function saveEdit()
 {
-	writelog(list_path);
+	var text = document.getElementById("editor").value;
+	writelog("Saving file: " + editpath);
 	synclog();
 	var req = new XMLHttpRequest();
+	req.open("PUT", editpath, true);
+	req.onreadystatechange = function(){
+		writelog("readyState("+editpath+"):"+req.readyState);
+		if (req.readyState === XMLHttpRequest.DONE) {
+			const status = req.status;
+			//writelog("status("+path+"):"+status);
+
+
+			if ((status === 0 || (status >= 200 && status < 400)) && req.responseText == "OK") {
+				editorContainer.style.display = 'none';
+				uploadContainer.style.display = 'block';
+			}
+		}
+		synclog();
+	};
+	req.send(new Blob([text],{type:"text/plain"}));
+}
+
+
+function editClick(event)
+{
+	var req = new XMLHttpRequest();
+	writelog("Editing file: " + event.target.data);
+	synclog();
+	editpath = event.target.data;
+	req.open("GET", event.target.data, true);
+	req.onprogress = function(event)
+	{
+		if(event.loaded > 65535)
+		{
+			req.abort();
+		}
+	
+		writelog(event.loaded);
+	}
+	req.onreadystatechange = function(){
+		writelog("readyState("+event.target.data+"):"+req.readyState);
+		if (req.readyState === XMLHttpRequest.DONE) {
+			const status = req.status;
+			//writelog("status("+path+"):"+status);
+
+
+			if ((status === 0 || (status >= 200 && status < 400)) && req.response.length > 0 && req.response.length < 65535) {
+				writelog("sizes: "+ size + " " + strlen);
+				document.getElementById("editor").value = req.responseText;
+				editorContainer.style.display = 'block';
+				uploadContainer.style.display = 'none';
+				var size = req.response.length;
+				var strlen = req.responseText.length;
+			}
+		}
+		synclog();
+	};
+	req.send();
+	//editorContainer.style.display = 'block';
+	//uploadContainer.style.display = 'none';
+}
+
+function cancelEdit()
+{
+	editorContainer.style.display = 'none';
+	uploadContainer.style.display = 'block';
+}
+
+function delDirClick(event)
+{
+}
+
+function zipClick(event)
+{
+}
+
+function updateList()
+{
+	if(oldFileList)
+		fileListContainer.removeChild(oldFileList);
+	oldFileList = null;
+	var req = new XMLHttpRequest();
+	if(list_path.length)
+		pathDisplay.innerText = list_path;
+	else
+		pathDisplay.innerText = "(root)";
+	writelog("Listing files: " + "/list/"+list_path);
+	synclog();
 	req.open("GET", "/list/"+list_path, true);
 	req.onreadystatechange = function(){
 		//writelog("readyState("+path+"):"+req.readyState);
@@ -267,8 +415,16 @@ function updateList()
 				var tbd = document.createElement("tbody");
 				var row = document.createElement("tr");
 				var cell = document.createElement("td");
-				cell.appendChild(document.createTextNode(".."))
-				cell.onclick = folderUp;
+				if(list_path.length)
+				{
+					cell.appendChild(document.createTextNode(".."))
+					cell.onclick = folderUp;
+				}
+				else
+					cell.appendChild(document.createTextNode("(root)"));
+				row.appendChild(cell);
+				cell = document.createElement("td");
+				cell.appendChild(document.createTextNode("<up>"));
 				row.appendChild(cell);
 				tbd.appendChild(row);
 
@@ -296,6 +452,16 @@ function updateList()
 						link.appendChild(document.createTextNode("del"));
 						cell.appendChild(link);
 						row.appendChild(cell);
+						cell = document.createElement("td");
+						link = document.createElement("button");
+						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						if(item.size < 65536)
+							link.onclick = editClick;
+						else
+							link.disabled = true;
+						link.appendChild(document.createTextNode("edit"));
+						cell.appendChild(link);
+						row.appendChild(cell);
 						tbd.appendChild(row);
 					}
 					//str += "<a href=\"/data/"+list_path+(list_path.length >0?"/":"")+item.name+"\">"+item.name+" ("+item.size+")</a><a onclick=\"delfile('/data/"+list_path+(list_path.length >0?"/":"")+item.name+"')\">del</a><br>";
@@ -306,7 +472,24 @@ function updateList()
 						link = document.createElement("a");
 						link.onclick = folderClick;
 						link.appendChild(document.createTextNode(item.name));
-						cell.appendChild(link)
+						cell.appendChild(link);
+						row.appendChild(cell);
+						cell = document.createElement("td");
+						cell.appendChild(document.createTextNode("<dir>"));
+						row.appendChild(cell);
+						cell = document.createElement("td");
+						link = document.createElement("button");
+						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.onclick = delDirClick;
+						link.appendChild(document.createTextNode("del"));
+						cell.appendChild(link);
+						row.appendChild(cell);
+						cell = document.createElement("td");
+						link = document.createElement("button");
+						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.onclick = zipClick;
+						link.appendChild(document.createTextNode("zip"));
+						cell.appendChild(link);
 						row.appendChild(cell);
 						tbd.appendChild(row);
 					}
@@ -314,10 +497,8 @@ function updateList()
 				}
 				tbl.appendChild(tbd);
 				//document.getElementById("filelist").innerHTML=str;
-				if(oldFileList)
-					fileListContainer.replaceChild(tbl, oldFileList);
-				else
-					fileListContainer.appendChild(tbl);
+
+				fileListContainer.appendChild(tbl);
 				oldFileList = tbl;
 				
 
@@ -330,9 +511,16 @@ function updateList()
 }
 updateList();
 document.getElementById("files").addEventListener("input", function(e) {
-	processFiles(document.getElementById("files").files);
+	processFiles(e.target.files);
 });
-
+document.getElementById("file").addEventListener("input", function(e) {
+	processFiles(e.target.files);
+});
+document.getElementById("zipfile").addEventListener("input", function(e) {
+	// TODO: zip
+});
+uploadButton.onclick = startUpload;
+uploadButton.disabled = true;
 </script>
 
 

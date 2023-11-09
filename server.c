@@ -81,7 +81,7 @@ void create_directories(const char *path)
 }
 
 #define MAX_RESP_SIZE 32768
-void serve_file(const char *path, char *buffer, int newsockfd, const char *mime )
+void serve_file(const char *path, char *buffer, int newsockfd, const char *mime, int binary)
 {
 	char resp_head[256] = "";
 	char resp[MAX_RESP_SIZE] = "";
@@ -92,16 +92,20 @@ void serve_file(const char *path, char *buffer, int newsockfd, const char *mime 
 							"Content-type: %s\r\n\r\n", mime);
 
 	if( fd < 0 ) return;
-	read(fd, resp, MAX_RESP_SIZE);
-	close(fd);
 
-	// Write to the socket
 	writeall(newsockfd, resp_head, resp_len);
-	int valwrite = writeall(newsockfd, resp, strlen(resp));
-	if (valwrite < 0) {
-		perror("webserver (write)");
-		return;
+
+	while(( resp_len = read(fd, resp, MAX_RESP_SIZE)) > 0)
+	{
+		int valwrite = writeall(newsockfd, resp, resp_len);
+		// Write to the socket
+		if (valwrite < 0) {
+			perror("webserver (write)");
+			return;
+		close(fd);
+		}
 	}
+	close(fd);
 }
 
 
@@ -276,6 +280,7 @@ int main() {
 					else break;
 				}
 				//printf("done %s\n", path);
+				ftruncate(fd,filelen);
 				close(fd);
 				const char resp_ok[] = "HTTP/1.0 200 OK\r\n"
 								   "Server: webserver-c\r\n"
@@ -332,12 +337,12 @@ int main() {
 			}
 			else if(strncmp(path, "/data/", 6))
 			{
-				serve_file("folderupload.html", buffer, newsockfd, "text/html");
+				serve_file("folderupload.html", buffer, newsockfd, "text/html", 1);
 			}
 			else
 			{
 				path += 6;
-				serve_file(path, buffer, newsockfd, "text/plain");
+				serve_file(path, buffer, newsockfd, "text/plain", 1);
 			}
 
 			close(newsockfd);
