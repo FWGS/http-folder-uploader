@@ -9,12 +9,13 @@ function synclog()
     if(!pagelog)
 	pagelog = document.getElementById("pagelog");
     pagelog.value = globallog;
+	pagelog.scrollTop = pagelog.scrollHeight;
 }
 
 function writelog(text)
 {
-    if(globallog.length > 4096)
-        globallog = globallog.substring(4096);
+    if(globallog.length > 32768)
+        globallog = globallog.substring(16384);
     globallog += ""+text+"\n";
     //document.getElementById("pagelog").innerText = log
 }
@@ -47,10 +48,10 @@ td {
   color: #fff;
   background-color: #000;
  }
-a:link {
+.sidebar a:link {
 color: #FFA;
 }
-a:visited {
+.sidebar a:visited {
 color: #FFC;
 }
 
@@ -64,37 +65,41 @@ color: #FFC;
 
 .sidebar {
   overflow:scroll;
-  overflow-x:hidden;
+  overflow-x:auto;
   width: 50%;
   background-color: #333;
   left: 0; }
 
 .main {
-  overflow: auto;
+  overflow: hidden;
   background-color: #f5f5f5;
   position: absolute;
   left: 50%;
   right: 0;
-  padding: 20px; }
+  padding: 20px;
+  padding-bottom:25px; }
 
 </style>
-<header><div style="position:absolute;overflow:hidden" id="pathdisplay"></div><div style="position:absolute;right:0px;overflow:hidden" id="pathdisplay"><button id="upload" style="width:100px" disabled>Upload</button>Dir:<input
+<header><div style="position:absolute;overflow:hidden" id="pathdisplay"></div><div style="position:absolute;right:0px;overflow:hidden">Dir:<input
       type="file"
       directory="directory"
       multiple
       webkitdirectory="webkitdirectory"
-      id="files"
+      id="files" size="4" style="font:40% sans-serif;"
     />File:
 <input
       type="file"
       multiple
-      id="file"
-    />Zip:<input type="file" id="zipfile"/>
+      id="file"  size="4" style="font:40% sans-serif"
+    />Zip:<input type="file" id="zipfile" height="24px" width="40px"  size="4" style="font:40% sans-serif;"/>
+<button id="mkdir" onclick="mkdirClick()">mkdir</button>
+<button id="upload" disabled>Upload</button>
+
 </div>
 </header>
 <div class="sidebar"><div id="filelist"></div></div>
 <div class="main" id="uploadcontainer">	
-<div id="dropcontainer" style="border:1px solid black;width:100%;height:50%;">Drop here</div><textarea id="pagelog"  style="width:100%;height:50%;resize:none;"></textarea>
+<div id="dropcontainer" style="border:1px solid black;width:100%;height:75%;">Drop here</div><textarea id="pagelog"  style="width:100%;height:25%;resize:none;"></textarea>
 </div>
 <div id="editorcontainer" class="main" style="padding-bottom:40px;overflow:hidden;display:none">
 <button onclick="saveEdit();">Save</button><button onclick="cancelEdit();">Cancel</button><br/>
@@ -175,7 +180,7 @@ function uploadFile(file)
 	var req = new XMLHttpRequest();
 	var path = (file.filepath|| file.webkitRelativePath || file.name);
 	writelog("uploading:"+path);
-	synclog();
+	//synclog();
 	req.open("PUT", "/data/"+list_path+(list_path.length >0?"/":"")+path, true);
 	req.onreadystatechange = function(){
 		//writelog("readyState("+path+"):"+req.readyState);
@@ -211,6 +216,7 @@ function updateStatus()
 		for(file of uploadingfiles)
 			status += (file.filepath|| file.webkitRelativePath|| file.name) + "\n";
 		dropContainer.innerText = status;
+		synclog();
 	}
 }
 
@@ -242,8 +248,11 @@ function processFiles(files)
 	synclog();*/
 	if(pendingfiles.length)
 		return;	
-	selectedfiles = Array.prototype.slice.call(files);
-	var len = files.length;
+	if(selectedfiles.length)
+		selectedfiles = Array.concat(selectedfiles,Array.prototype.slice.call(files))
+	else
+		selectedfiles = Array.prototype.slice.call(files);
+	var len = selectedfiles.length;
 	uploadButton.disabled = false;
 	dropContainer.innerText = "" + len + " files selected, click \"Upload\" to start now!";
 }
@@ -387,6 +396,22 @@ function delDirClick(event)
 
 function zipClick(event)
 {
+	var a = document.createElement("a");
+	a.href = event.target.data;
+	a.appendChild(document.createTextNode("Download zip " + event.target.data));
+	a.target = "_blank";
+	dropContainer.appendChild(document.createElement("br"));
+	dropContainer.appendChild(a);
+}
+
+function mkdirClick()
+{
+	var newName = prompt("Folder name", "");
+}
+
+function moveClick(event)
+{
+	var newName = prompt("New filename", event.target.data);
 }
 
 function updateList()
@@ -415,6 +440,7 @@ function updateList()
 				var tbd = document.createElement("tbody");
 				var row = document.createElement("tr");
 				var cell = document.createElement("td");
+				cell.width = "100%";
 				if(list_path.length)
 				{
 					cell.appendChild(document.createTextNode(".."))
@@ -435,7 +461,6 @@ function updateList()
 					{
 						row = document.createElement("tr");
 						cell = document.createElement("td");
-						cell.width = "100%";
 						link = document.createElement("a");
 						link.appendChild(document.createTextNode(item.name));
 						link.href="/data/"+list_path+(list_path.length >0?"/":"")+item.name;
@@ -444,6 +469,13 @@ function updateList()
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						cell.appendChild(document.createTextNode(item.size));
+						row.appendChild(cell);
+						cell = document.createElement("td");
+						link = document.createElement("button");
+						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.onclick = moveClick;
+						link.appendChild(document.createTextNode("mv"));
+						cell.appendChild(link);
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
@@ -459,7 +491,7 @@ function updateList()
 							link.onclick = editClick;
 						else
 							link.disabled = true;
-						link.appendChild(document.createTextNode("edit"));
+						link.appendChild(document.createTextNode("ed"));
 						cell.appendChild(link);
 						row.appendChild(cell);
 						tbd.appendChild(row);
@@ -476,6 +508,13 @@ function updateList()
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						cell.appendChild(document.createTextNode("<dir>"));
+						row.appendChild(cell);
+						cell = document.createElement("td");
+						link = document.createElement("button");
+						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.onclick = moveClick;
+						link.appendChild(document.createTextNode("mv"));
+						cell.appendChild(link);
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
@@ -510,13 +549,13 @@ function updateList()
 	
 }
 updateList();
-document.getElementById("files").addEventListener("input", function(e) {
+document.getElementById("files").addEventListener("change", function(e) {
 	processFiles(e.target.files);
 });
-document.getElementById("file").addEventListener("input", function(e) {
+document.getElementById("file").addEventListener("change", function(e) {
 	processFiles(e.target.files);
 });
-document.getElementById("zipfile").addEventListener("input", function(e) {
+document.getElementById("zipfile").addEventListener("change", function(e) {
 	// TODO: zip
 });
 uploadButton.onclick = startUpload;
