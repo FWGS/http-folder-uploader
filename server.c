@@ -292,12 +292,18 @@ int main() {
 				//printf("done %s\n", path);
 				ftruncate(fd,filelen);
 				close(fd);
-				const char resp_ok[] = "HTTP/1.0 200 OK\r\n"
+				const char resp_ok_beg[] = "HTTP/1.0 201 Created\r\n"
 								   "Server: webserver-c\r\n"
-								   "Content-type: text/html\r\n\r\n"
+								   "Location: /files/";
+				const char resp_ok_end[] = "\r\nContent-type: text/html\r\n\r\n"
 								   "OK";
+
 				if( valread >= 0)
-					writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+				{
+					writeall(newsockfd, resp_ok_beg, sizeof(resp_ok_beg) - 1);
+					writeall(newsockfd, path, strlen(path));
+					writeall(newsockfd, resp_ok_end, sizeof(resp_ok_end) - 1);
+				}
 				close(newsockfd);
 				_exit(0);
 			}
@@ -355,6 +361,62 @@ int main() {
 				serve_file(path, buffer, newsockfd, "text/plain", 1);
 			}
 
+			close(newsockfd);
+		}
+		else if(!strcmp(method, "MKCOL"))
+		{
+			char *path = uri;
+			const char resp_ok[] = "HTTP/1.0 201 Created\r\n"
+								   "Server: webserver-c\r\n"
+								   "Access-Control-Allow-Origin: *\r\n"
+								   "Content-type: text/html\r\n\r\n"
+								   "OK";
+			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
+			{
+				close(newsockfd);
+				continue;
+			}
+			path += 7;
+			create_directories(path);
+
+			if( valread >= 0)
+				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+			close(newsockfd);
+		}
+		else if(!strcmp(method, "MOVE"))
+		{
+			char *path = uri;
+			const char resp_ok[] = "HTTP/1.0 201 Created\r\n"
+								   "Server: webserver-c\r\n"
+								   "Content-type: text/html\r\n\r\n"
+								   "OK";
+			const char *dest;
+			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
+			{
+				close(newsockfd);
+				continue;
+			}
+			path += 7;
+
+			dest = strcasestr(buffer, "destination: ");
+			if(dest)
+			{
+				char *e1 = strstr(dest, "\n");
+				char *e2 = strstr(dest, "\r\n");
+				if(e2 && e2 < e1)
+					e1 = e2;
+				*e1 = 0;
+				dest += sizeof("destination: " ) - 1;
+				printf("move %s %s\n", path, dest);
+				if(!strncmp(dest, "/files/", 7) && !strstr(dest, ".."))
+				{
+					dest += 7;
+					rename(path, dest);
+				}
+			}
+
+			if( valread >= 0)
+				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
 			close(newsockfd);
 		}
 	}

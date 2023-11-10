@@ -406,12 +406,45 @@ function zipClick(event)
 
 function mkdirClick()
 {
-	var newName = prompt("Folder name", "");
+	var req = new XMLHttpRequest();
+	var path= prompt("Folder name", "");
+	req.open("MKCOL", "/files/"+list_path+(list_path.length >0?"/":"")+path+ "/", true);
+	req.onreadystatechange = function(){
+		if (req.readyState === XMLHttpRequest.DONE) {
+			const status = req.status;
+			//writelog("status("+path+"):"+status);
+	
+			writelog(status);
+			synclog();
+			if ((status === 0 || (status >= 200 && status < 400))) {
+				updateList();
+			}
+		}
+	}
+	req.send();
 }
 
 function moveClick(event)
 {
 	var newName = prompt("New filename", event.target.data);
+	if(newName.indexOf("/") < 0)
+		newName = "/files/"+list_path+(list_path.length >0?"/":"")+newName;
+	var req = new XMLHttpRequest();
+	req.open("MOVE", event.target.data, true);
+	req.setRequestHeader("Destination", newName);
+	req.onreadystatechange = function(){
+		if (req.readyState === XMLHttpRequest.DONE) {
+			const status = req.status;
+			//writelog("status("+path+"):"+status);
+	
+			writelog(status);
+			synclog();
+			if ((status === 0 || (status >= 200 && status < 400))) {
+				updateList();
+			}
+		}
+	}
+	req.send();
 }
 
 function updateList()
