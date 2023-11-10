@@ -608,13 +608,26 @@ int main() {
 		}
 		else if(!strcmp(method, "LOCK"))
 		{
-			const char resp_ok[] = "HTTP/1.1 405 Method not allowed\r\n"
-								   "Content-Type: text/plain\r\n"
-								   "Content-Length: 0\r\n";
-								   /*"\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:prop xmlns:D=\"DAV:\"> <D:lockdiscovery><D:activelock> <D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>Infinity</D:depth>"
+			char resp_lock[256] = "";
+			static int count;
+			char lock_token [] = "opaquelocktoken:7a28f329-f1cf-4123-a34c-dba594689257";
+			lock_token[17] += count++ % 10;
+
+			snprintf(resp_lock, 255, "HTTP/1.1 200 OK\r\n"
+			"Content-Type: application/xml\r\n"
+			"Lock-Token: <%s>\r\n\r\n"
+			"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+			"<D:prop xmlns:D=\"DAV:\"><D:lockdiscovery><D:activelock>"
+			"<D:locktoken><D:href>%s</D:href></D:locktoken>"
+			"<D:lockroot><D:href>%s</D:href></D:lockroot>"
+			"</D:activelock></D:lockdiscovery></D:prop>", lock_token, lock_token, uri );
+			/*= "HTTP/1.1 405 Method not allowed\r\n"
+								   "Content-Type: application/xml\r\n"
+								   //"Content-Length: 0\r\n";
+								   "\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:prop xmlns:D=\"DAV:\"> <D:lockdiscovery><D:activelock> <D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>Infinity</D:depth>"
 									"<D:owner></D:owner><D:timeout>Second-604800</D:timeout><D:locktoken><D:href>opaquelocktoken:e71d4fae-5dec-22d6-fea5-00a0c91e6be4</D:href></D:locktoken></D:activelock></D:lockdiscovery></D:prop>";*/
 			if( valread >= 0)
-				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+				writeall(newsockfd, resp_lock, strlen(resp_lock));
 			close(newsockfd);
 		}
 		else
