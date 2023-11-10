@@ -224,6 +224,7 @@ int main() {
 								(socklen_t *)&client_addrlen);
 		if (sockn < 0) {
 			perror("webserver (getsockname)");
+			close(newsockfd);
 			continue;
 		}
 		int he = -1;
@@ -232,18 +233,25 @@ int main() {
 		int valread = readheaders(newsockfd, buffer, BUFFER_SIZE - 1, &he);
 		if (valread < 0) {
 			perror("webserver (read)");
+			close(newsockfd);
 			continue;
 		}
 
 		// Read the request
-		char method[BUFFER_SIZE], uri[BUFFER_SIZE], version[BUFFER_SIZE];
+		char method[32] = "", uri[256] = "", version[32] = "";
 		const char *contentlength = strcasestr(buffer, "content-length: ");
 		int clen = 0;
 		if(contentlength)
 		{
 			clen = atoi(contentlength + sizeof("content-length: ") - 1);
 		}
-		sscanf(buffer, "%s %s %s", method, uri, version);
+		if( sscanf(buffer, "%31s %255s %31s", method, uri, version) != 3 )
+		{
+			printf("Bad headers!\n");
+			close(newsockfd);
+			continue;
+		}
+
 		printf("[%s:%u] %s %s %s\n", inet_ntoa(client_addr.sin_addr),
 			   ntohs(client_addr.sin_port), method, version, uri);
 
@@ -324,7 +332,7 @@ int main() {
 			}
 			close(newsockfd);
 		}
-		else
+		else if(!strcmp(method, "GET"))
 		{
 			char *path = uri;
 			if(strstr(path, ".."))
