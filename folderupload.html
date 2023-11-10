@@ -181,7 +181,7 @@ function uploadFile(file)
 	var path = (file.filepath|| file.webkitRelativePath || file.name);
 	writelog("uploading:"+path);
 	//synclog();
-	req.open("PUT", "/data/"+list_path+(list_path.length >0?"/":"")+path, true);
+	req.open("PUT", "/files/"+list_path+(list_path.length >0?"/":"")+path, true);
 	req.onreadystatechange = function(){
 		//writelog("readyState("+path+"):"+req.readyState);
 		if (req.readyState === XMLHttpRequest.DONE) {
@@ -242,7 +242,7 @@ function processFiles(files)
 	/*for(var file of files)
 		writelog(file.filepath|| file.webkitRelativePath);
 	var req = new XMLHttpRequest();
-	req.open("PUT", "/data/"+(file.filepath|| file.webkitRelativePath), true);
+	req.open("PUT", "/files/"+(file.filepath|| file.webkitRelativePath), true);
 	console.log(file.size);
 	req.send(file)
 	synclog();*/
@@ -463,7 +463,7 @@ function updateList()
 						cell = document.createElement("td");
 						link = document.createElement("a");
 						link.appendChild(document.createTextNode(item.name));
-						link.href="/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.href="/files/"+list_path+(list_path.length >0?"/":"")+item.name;
 						link.target="_blank";
 						cell.appendChild(link)
 						row.appendChild(cell);
@@ -472,21 +472,21 @@ function updateList()
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
-						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.data = "/files/"+list_path+(list_path.length >0?"/":"")+item.name;
 						link.onclick = moveClick;
 						link.appendChild(document.createTextNode("mv"));
 						cell.appendChild(link);
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
-						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.data = "/files/"+list_path+(list_path.length >0?"/":"")+item.name;
 						link.onclick = delClick;
 						link.appendChild(document.createTextNode("del"));
 						cell.appendChild(link);
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
-						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.data = "/files/"+list_path+(list_path.length >0?"/":"")+item.name;
 						if(item.size < 65536)
 							link.onclick = editClick;
 						else
@@ -496,7 +496,7 @@ function updateList()
 						row.appendChild(cell);
 						tbd.appendChild(row);
 					}
-					//str += "<a href=\"/data/"+list_path+(list_path.length >0?"/":"")+item.name+"\">"+item.name+" ("+item.size+")</a><a onclick=\"delfile('/data/"+list_path+(list_path.length >0?"/":"")+item.name+"')\">del</a><br>";
+					//str += "<a href=\"/files/"+list_path+(list_path.length >0?"/":"")+item.name+"\">"+item.name+" ("+item.size+")</a><a onclick=\"delfile('/files/"+list_path+(list_path.length >0?"/":"")+item.name+"')\">del</a><br>";
 					else if(item.type == 0)
 					{
 						row = document.createElement("tr");
@@ -511,21 +511,21 @@ function updateList()
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
-						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.data = "/files/"+list_path+(list_path.length >0?"/":"")+item.name;
 						link.onclick = moveClick;
 						link.appendChild(document.createTextNode("mv"));
 						cell.appendChild(link);
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
-						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.data = "/files/"+list_path+(list_path.length >0?"/":"")+item.name;
 						link.onclick = delDirClick;
 						link.appendChild(document.createTextNode("del"));
 						cell.appendChild(link);
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
-						link.data = "/data/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.data = "/files/"+list_path+(list_path.length >0?"/":"")+item.name;
 						link.onclick = zipClick;
 						link.appendChild(document.createTextNode("zip"));
 						cell.appendChild(link);

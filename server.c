@@ -265,10 +265,10 @@ int main() {
 				//handleupload(newsockfd, buffer, uri);
 				int fd;
 				char *path = uri;
-				if(strncmp(path, "/data/", 6) || strstr(path, ".."))
+				if(strncmp(path, "/files/", 7) || strstr(path, ".."))
 					_exit(1);
 
-				path += 6;
+				path += 7;
 				while(path[0] == '/')path++;
 				create_directories(path);
 				fd = open(path, O_CREAT | O_WRONLY, 0666);
@@ -320,9 +320,9 @@ int main() {
 				close(newsockfd);
 				continue;
 			}
-			if(!strncmp(path, "/data/", 6))
+			if(!strncmp(path, "/files/", 7))
 			{
-				path += 6;
+				path += 7;
 				unlink(path);
 				const char resp_ok[] = "HTTP/1.0 200 OK\r\n"
 									   "Server: webserver-c\r\n"
@@ -345,13 +345,13 @@ int main() {
 				path += 6;
 				serve_list(path, buffer, newsockfd);
 			}
-			else if(strncmp(path, "/data/", 6))
+			else if(strncmp(path, "/files/", 7))
 			{
 				serve_file("folderupload.html", buffer, newsockfd, "text/html", 1);
 			}
 			else
 			{
-				path += 6;
+				path += 7;
 				serve_file(path, buffer, newsockfd, "text/plain", 1);
 			}
 
