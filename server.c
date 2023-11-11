@@ -163,6 +163,7 @@ void serve_list(const char *path, char *buffer, int fd)
 	const char end[] = "{\"name\": \"\", \"type\": -1, \"size\": 0}]";
 	writeall(fd, end, sizeof(end) - 1);
 }
+void serve_path_dav(const char *path, char *buffer, int fd);
 
 void serve_list_dav(const char *path, char *buffer, int fd)
 {
@@ -178,13 +179,25 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 	const char resp_list[] =
 		"HTTP/1.1 200 OK\r\n"
 		"Server: webserver-c\r\n"
-		"Content-Type: text-xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">";
+		"Content-Type: text/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">";
 	DIR *dirp;
-	writeall(fd, resp_list, sizeof(resp_list) - 1);
 	printf("list %s\n", path);
 	dirp = opendir(path);
 	if (!dirp)
+	{
+		const char resp_list1[] =
+			//"HTTP/1.1 403 Forbidden\r\n"
+			"HTTP/1.1 404 Not found\r\n"
+			"Server: webserver-c\r\n"
+			"Content-Length: 0\r\n"
+			"\r\n";
+			//"Content-Type: text/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\" >";
+		writeall(fd, resp_list1, sizeof(resp_list1) - 1);
+		write(1, resp_list1, sizeof(resp_list1) - 1);
+		printf("bad dir %s %d\n", path, errno);
 		return;
+
+	}
 	if( plen > PATH_MAX - 2)
 		plen = PATH_MAX - 2;
 	strncpy(fpath, path, plen);
@@ -197,34 +210,48 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 		"<D:resourcetype><D:collection/></D:resourcetype>"
 		"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>",
 		fpath);*/
-	fpath[plen++] = '/';
+	if(fpath[plen - 1] != '/')
+		fpath[plen++] = '/';
 
 
+	int dirflag = 0;
 	while (1) {
 		struct dirent *dp;
 		struct stat sb;
 
 		dp = readdir(dirp);
 		if (!dp)
+		{
+			if(!dirflag)
+			{
+				serve_path_dav(path, buffer, fd);
+				return;
+			}
 			break;
+		}
 		if (dp->d_name[0] == '.')// && !dp->d_name[1])
 			continue;
 		strncpy(&fpath[plen], dp->d_name, PATH_MAX - plen - 1);
 		if (stat(fpath, &sb) != 0)
 			continue;
-		printf("dir %s %d %d\n", dp->d_name, len_fil, len_dir);
+		if(!dirflag)
+		{
+			writeall(fd, resp_list, sizeof(resp_list) - 1);
+			dirflag = 1;
+		}
+		printf("dir %s %s %d %d\n", fpath, dp->d_name, len_fil, len_dir);
 
 		if(S_ISDIR(sb.st_mode))
 		{
 			int len = snprintf(resp, MAX_RESP_SIZE - 1,
 				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
-				"<D:getetag>\"01572461888\"</D:getetag>"
+				//"<D:getetag>\"01572461888\"</D:getetag>"
 				"<D:getlastmodified>Wed, 30 Oct 2019 18:58:08 GMT</D:getlastmodified>"
 				"<D:resourcetype><D:collection/></D:resourcetype>"
-				"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes>"
+				//"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes>"
 				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
-				dp->d_name);
+				fpath);
 			writeall(fd, resp, len);
 		}
 		else
@@ -234,11 +261,11 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
 				"<D:getcontentlength>%d</D:getcontentlength>"
-				"<D:getetag>\"01572461888\"</D:getetag>"
+				//"<D:getetag>\"01572461888\"</D:getetag>"
 				"<D:getlastmodified>Wed, 30 Oct 2019 18:58:08 GMT</D:getlastmodified>"
 				"<D:resourcetype /><d:getcontenttype>text/plain</d:getcontenttype>"
 				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
-				dp->d_name, (int)sb.st_size);
+				fpath, (int)sb.st_size);
 			writeall(fd, resp, len);
 		}
 
@@ -251,7 +278,7 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 void serve_path_dav(const char *path, char *buffer, int fd)
 {
 	char resp_dir[MAX_RESP_SIZE];
-	int len_dir = 0, len_fil = 0;
+	int len_dir = 0;
 	int plen = strlen(path);
 	struct stat sb;
 
@@ -261,21 +288,33 @@ void serve_path_dav(const char *path, char *buffer, int fd)
 		plen = 1;
 	}
 	int s = stat(path, &sb);
-	if(s || S_ISDIR(sb.st_mode) && sb.st_size == 0)
+/*	if(path[0] == '.')
 	{
 		const char resp_list1[] =
 			"HTTP/1.1 207 OK\r\n"
 			"Server: webserver-c\r\n"
-			"Content-Type: text-xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\" />";
+			"Content-Type: application/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\" />";
+		write(1, resp_list1, sizeof(resp_list1) - 1);
 		writeall(fd, resp_list1, sizeof(resp_list1) - 1);
-		printf("bad stat\n");
+		return;
+	}*/
+	if(s) // || (!S_ISDIR(sb.st_mode) && sb.st_size == 0))
+	{
+		const char resp_list1[] =
+			//"HTTP/1.1 207 OK\r\n"
+			"HTTP/1.1 404 Not found\r\n"
+			"Server: webserver-c\r\n"
+			"Content-Type: application/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\" />";
+		writeall(fd, resp_list1, sizeof(resp_list1) - 1);
+		write(1, resp_list1, sizeof(resp_list1) - 1);
+		printf("bad stat %s %d %d %d\n", path, s, errno, sb.st_mode);
 		return;
 
 	}
 	const char resp_list[] =
 		"HTTP/1.1 200 OK\r\n"
 		"Server: webserver-c\r\n"
-		"Content-Type: text-xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">";
+		"Content-Type: application/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">";
 	writeall(fd, resp_list, sizeof(resp_list) - 1);
 
 
@@ -283,12 +322,15 @@ void serve_path_dav(const char *path, char *buffer, int fd)
 		&resp_dir[0] + len_dir, MAX_RESP_SIZE - len_dir,
 		"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 		"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
+		"<D:getcontentlength>%d</D:getcontentlength>"
 		"<D:getetag>\"01572461888\"</D:getetag>"
 		"<D:getlastmodified>Wed, 30 Oct 2019 18:58:08 GMT</D:getlastmodified>"
 		"%s"
 		"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>",
-		path, S_ISDIR(sb.st_mode)?"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes><D:resourcetype><D:collection/></D:resourcetype>":"<D:resourcetype /><d:getcontenttype>text/plain</d:getcontenttype>");
+		path, (!S_ISDIR(sb.st_mode))?(int)sb.st_size:0,
+		 S_ISDIR(sb.st_mode)?"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes><D:resourcetype><D:collection/></D:resourcetype>":"<D:resourcetype /><d:getcontenttype>text/plain</d:getcontenttype>");
 
+	write(1, resp_dir, len_dir);
 	writeall(fd, resp_dir, len_dir);
 }
 
@@ -492,14 +534,26 @@ int main() {
 
 			close(newsockfd);
 		}
+		else if(!strcmp(method, "HEAD"))
+		{
+			if(strncmp(uri, "/files", 6))
+			{
+				const char resp_ok[] = "HTTP/1.1 200 OK\r\n"
+									   "Server: webserver-c\r\n"
+									   "Content-type: text/html\r\n\r\n"
+									   "";
+				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+			}
+			close(newsockfd);
+		}
 		else if(!strcmp(method, "MKCOL"))
 		{
 			char *path = uri;
 			const char resp_ok[] = "HTTP/1.1 201 Created\r\n"
-								   "Server: webserver-c\r\n"
-								   "Access-Control-Allow-Origin: *\r\n"
-								   "Content-type: text/html\r\n\r\n"
-								   "OK";
+								   "Server: webserver-c\r\n\r\n"
+								   //"Access-Control-Allow-Origin: *\r\n"
+								   //"Content-type: text/html\r\n\r\n"
+								   "";
 			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
 			{
 				close(newsockfd);
@@ -509,8 +563,59 @@ int main() {
 			create_directories(path);
 			mkdir(path, 0777);
 
-			if( valread >= 0)
+			int filelen = valread - he;
+			while( filelen < clen )
+			{
+				int readlen = clen - filelen;
+				if( readlen > BUFFER_SIZE )
+					readlen = BUFFER_SIZE;
+				valread = read( newsockfd, buffer, readlen );
+				if(valread > 0)
+				{
+					filelen += valread;
+					//printf("transfer %d\n",(int)valread);
+					write(1, buffer, valread);
+				}
+				else break;
+			}
+			//if( valread >= 0)
 				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+			close(newsockfd);
+		}
+		else if(!strcmp(method, "PROPPATCH"))
+		{
+			char *path = uri;
+			const char resp_ok[] = "HTTP/1.1 207 Multi-Status\r\n"
+								   "Server: webserver-c\r\n"
+								   "Content-type: application/xml\r\n\r\n"
+								   "<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>";
+			const char resp_end[] = "</D:href><D:propstat><D:prop></D:prop><D:status>HTTP/1.1 403 Forbidden</D:status></D:propstat></D:response></D:multistatus>";
+			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
+			{
+				close(newsockfd);
+				continue;
+			}
+			printf("%s\n", buffer);
+			int filelen = valread - he;
+			while( filelen < clen )
+			{
+				int readlen = clen - filelen;
+				if( readlen > BUFFER_SIZE )
+					readlen = BUFFER_SIZE;
+				valread = read( newsockfd, buffer, readlen );
+				if(valread > 0)
+				{
+					filelen += valread;
+					//printf("transfer %d\n",(int)valread);
+					write(1, buffer, valread);
+				}
+				else break;
+			}
+
+			//if( valread >= 0)
+				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+				writeall(newsockfd, uri, strlen(uri));
+				writeall(newsockfd, resp_end, sizeof(resp_end) - 1);
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "MOVE"))
@@ -576,7 +681,7 @@ int main() {
 				writeall(newsockfd, resp_auth, sizeof(resp_auth) - 1);
 				close(newsockfd);
 			}*/
-			if(strncmp(path, "/files/", 6) || strstr(path, ".."))
+			if(strncmp(path, "/files", 6) || strstr(path, ".."))
 			{
 				serve_path_dav(".", buffer, newsockfd);
 				close(newsockfd);
@@ -599,7 +704,7 @@ int main() {
 		{
 			const char resp_ok[] = "HTTP/1.1 200 OK\r\n"
 			"Content-Type: text/plain\r\n"
-			"Access-Control-Allow-Methods: PROPFIND, PROPPATCH, COPY, MOVE, DELETE, MKCOL, PUT, GETLIB, VERSION-CONTROL, CHECKIN, CHECKOUT, UNCHECKOUT, REPORT, UPDATE, CANCELUPLOAD, HEAD, OPTIONS, GET, POST\r\n"
+			"Access-Control-Allow-Methods: PROPFIND, PROPPATCH, COPY, MOVE, DELETE, MKCOL, PUT, UNLOCK, GETLIB, VERSION-CONTROL, CHECKIN, CHECKOUT, UNCHECKOUT, REPORT, UPDATE, CANCELUPLOAD, HEAD, OPTIONS, GET, POST\r\n"
 			"Access-Control-Allow-Headers: Overwrite, Destination, Content-Type, Depth, User-Agent, X-File-Size, X-Requested-With, If-Modified-Since, X-File-Name, Cache-Control\r\n"
 			"Access-Control-Max-Age: 86400\r\n\r\n";
 			if( valread >= 0)
@@ -608,27 +713,48 @@ int main() {
 		}
 		else if(!strcmp(method, "LOCK"))
 		{
-			char resp_lock[256] = "";
+			char resp_lock[1024] = "";
 			static int count;
-			char lock_token [] = "opaquelocktoken:7a28f329-f1cf-4123-a34c-dba594689257";
+#if 0
+			char lock_token [] = "opaquelocktoken:7028f329-f1cf-4123-a34c-dba594689257";
 			lock_token[17] += count++ % 10;
+#else
+			char lock_token [] = "1699659945";
+			sprintf(lock_token,"%d",(int)time(0));
+			//lock_token[1] += count++ % 10;
+#endif
+			
 
-			snprintf(resp_lock, 255, "HTTP/1.1 200 OK\r\n"
-			"Content-Type: application/xml\r\n"
-			"Lock-Token: <%s>\r\n\r\n"
+			snprintf(resp_lock, 1023, "HTTP/1.1 200 OK\r\n"
+			"Content-Type: application/xml; charset=utf-8\r\n"
+			"Lock-Token: <%s>\r\n"
+			"Content-Length: %d\r\n" // mandatory on windows
+			"Date: Fri, 10 Nov 2023 23:45:40 GMT\r\n\r\n"
 			"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
 			"<D:prop xmlns:D=\"DAV:\"><D:lockdiscovery><D:activelock>"
 			"<D:locktoken><D:href>%s</D:href></D:locktoken>"
 			"<D:lockroot><D:href>%s</D:href></D:lockroot>"
-			"</D:activelock></D:lockdiscovery></D:prop>", lock_token, lock_token, uri );
+			"</D:activelock></D:lockdiscovery></D:prop>", lock_token, 220 + strlen(lock_token)+strlen(uri), lock_token, uri );
+			printf("clen %d\n", (int)strlen(strstr(resp_lock, "\r\n\r\n")+4));
 			/*= "HTTP/1.1 405 Method not allowed\r\n"
 								   "Content-Type: application/xml\r\n"
 								   //"Content-Length: 0\r\n";
 								   "\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:prop xmlns:D=\"DAV:\"> <D:lockdiscovery><D:activelock> <D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>Infinity</D:depth>"
 									"<D:owner></D:owner><D:timeout>Second-604800</D:timeout><D:locktoken><D:href>opaquelocktoken:e71d4fae-5dec-22d6-fea5-00a0c91e6be4</D:href></D:locktoken></D:activelock></D:lockdiscovery></D:prop>";*/
-			if( valread >= 0)
-				writeall(newsockfd, resp_lock, strlen(resp_lock));
+			//if( valread >= 0)
+			writeall(newsockfd, resp_lock, strlen(resp_lock));
+			write(1, resp_lock, strlen(resp_lock));
 			close(newsockfd);
+		}
+		else if(!strcmp(method, "UNLOCK"))
+		{
+			const char resp_ok[] = "HTTP/1.1 200 OK\r\n"
+								   "Server: webserver-c\r\n"
+								   "Content-type: application/xml\r\n\r\n"
+								   "";
+			writeall(newsockfd, resp_ok, strlen(resp_ok));
+			close(newsockfd);
+		
 		}
 		else
 		{
