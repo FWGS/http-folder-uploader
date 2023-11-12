@@ -109,15 +109,65 @@ color: #FFC;
 
 
 <script>
+
+// ie
+
+function parseJSON(text)
+{
+	if("JSON" in window)
+	{
+		return JSON.parse(text);
+	}
+	else return eval("("+text+")");
+}
+
+function getXMLHttpRequest()
+{
+	var xhr = null;
+
+	if(window.XMLHttpRequest)
+		xhr = new XMLHttpRequest();
+	else if(window.ActiveXObject) { // poor alternative, but at least filelist and editing works
+		try {
+			xhr = new ActiveXObject("Msxml2.XMLHTTP");
+		} catch(e) {
+			xhr = new ActiveXObject("Microsoft.XMLHTTP");
+		}
+	}
+	else
+		alert("Your browser doesn't support XMLHTTPRequest...");
+	return xhr;
+}
+
+var XMLHttpRequest_DONE = 4
+
+
 var dropContainer = document.getElementById("dropcontainer")
-dropContainer.ondragover = dropContainer.ondragenter = function(evt) {
-	evt.preventDefault();
+dropContainer.ondragover = dropContainer.ondragenter = function(event) {
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
+	if(event && event.preventDefault)
+		event.preventDefault();
+	if(event.dataTransfer)
+		event.dataTransfer.dropEffect = 'copy';
+	return false;
 };
 dropContainer.ondrop = function(event) {
-	event.preventDefault();
-	processDTItems(event.dataTransfer.items).then(function(files){
-		processFiles(files);
-	});
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
+	if(event && event.preventDefault)
+		event.preventDefault();
+ 	if('Promise' in window && event.dataTransfer && event.dataTransfer.items && event.dataTransfer.items[0].webkitGetAsEntry)
+	{
+		processDTItemsAsync(event.dataTransfer.items).then(function(files){
+			processFiles(files);
+		});
+	}
+	else
+		processDTItems(event.dataTransfer);
+	return false;
 };
 
 function resolveFile(resolve, item, path, fileList)
@@ -134,8 +184,8 @@ function resolveDir(resolve, item, path, fileList)
 	var dirReader = item.createReader();
 	dirReader.readEntries(function(entries){
 		var entriesPromises = [];
-		for (var entr of entries)
-			entriesPromises.push(traverseItems(entr, (path ? path :"") + item.name + "/", fileList));
+		for (var i = 0; i < entries.length;i++)
+			entriesPromises.push(traverseItems(entries[i], (path ? path :"") + item.name + "/", fileList));
 		resolve(Promise.all(entriesPromises));
 	});
 }
@@ -155,17 +205,53 @@ function traverseItems(item, path, fileList)
 	});
 }
 
-function processDTItems(dataTransferItems)
+function processDTItemsAsync(dataTransferItems) // do we ever need this???
 {
 	var files = [];
 	return new Promise(function(resolve, reject){
 	var entriesPromises = [];
-		for (var it of dataTransferItems)
-			entriesPromises.push(traverseItems(it.webkitGetAsEntry(), "", files));
+		for (var i = 0; i < dataTransferItems.length;i++)
+			entriesPromises.push(traverseItems(dataTransferItems[i].webkitGetAsEntry(), "", files));
 		Promise.all(entriesPromises).then(function(entries){
 			resolve(files);
 		});
 	});
+}
+function traverseFileTree(item, path) {
+  path = path || "";
+  if (item.isFile) {
+    // Get file
+    item.file(function(file) {
+      file.filepath = path + file.name;
+		selectedfiles.push(file);
+		processFiles([]);
+    });
+  } else if (item.isDirectory) {
+    // Get folder contents
+    var dirReader = item.createReader();
+    dirReader.readEntries(function(entries) {
+      for (var i=0; i<entries.length; i++) {
+        traverseFileTree(entries[i], path + item.name + "/");
+      }
+    });
+  }
+}
+function processDTItems(dataTransfer)
+{
+	var items = dataTransfer.items;
+
+	if(!items || !items[0].webkitGetAsEntry)
+	{
+		// this cannot handle folders at all
+		processFiles(dataTransfer.files);
+		return;
+	}
+
+	for (var i=0; i < items.length; i++) {
+		// this handles folders and files in async way, we'll update file list on every file (slow)
+		var item = dataTransfer.items[i].webkitGetAsEntry();
+		traverseFileTree(item);
+	}
 }
 
 var pendingfiles = [];
@@ -177,15 +263,15 @@ var list_path = "";
 function uploadFile(file)
 {
 	uploadingfiles.push(file);
-	var req = new XMLHttpRequest();
+	var req = getXMLHttpRequest();
 	var path = (file.filepath|| file.webkitRelativePath || file.name);
 	writelog("uploading:"+path);
 	//synclog();
 	req.open("PUT", "/files/"+list_path+(list_path.length >0?"/":"")+path, true);
 	req.onreadystatechange = function(){
 		//writelog("readyState("+path+"):"+req.readyState);
-		if (req.readyState === XMLHttpRequest.DONE) {
-			const status = req.status;
+		if (req.readyState === XMLHttpRequest_DONE) {
+			var status = req.status;
 			//writelog("status("+path+"):"+status);
 
 
@@ -196,7 +282,7 @@ function uploadFile(file)
 				writelog("error:"+path);
 				synclog();
 			}
-			var index = uploadingfiles.indexOf(file);
+ 			var index = uploadingfiles.indexOf(file);
 			if(index >= 0)
 			uploadingfiles.splice(index, 1);
 			scheduleUpload();
@@ -213,8 +299,11 @@ function updateStatus()
 		last_update = now;
 		var count = pendingfiles.length;
 		var status = "Files left: " + count + "\nUploading now:\n" ;
-		for(file of uploadingfiles)
+		for(var i = 0; i < uploadingfiles.length; i++)
+		{
+			var file = uploadingfiles[i];
 			status += (file.filepath|| file.webkitRelativePath|| file.name) + "\n";
+		}
 		dropContainer.innerText = status;
 		synclog();
 	}
@@ -249,9 +338,10 @@ function processFiles(files)
 	if(pendingfiles.length)
 		return;	
 	if(selectedfiles.length)
-		selectedfiles = Array.concat(selectedfiles,Array.prototype.slice.call(files))
-	else
+		selectedfiles = Array.prototype.concat(selectedfiles,Array.prototype.slice.call(files))
+	else if(files)
 		selectedfiles = Array.prototype.slice.call(files);
+
 	var len = selectedfiles.length;
 	uploadButton.disabled = false;
 	dropContainer.innerText = "" + len + " files selected, click \"Upload\" to start now!";
@@ -278,7 +368,7 @@ function delfile(path)
 {
 	if(!confirm("Delete "+path))
 		return;
-	var req = new XMLHttpRequest();
+	var req = getXMLHttpRequest();
 	req.open("DELETE", path, true);
 	req.onreadystatechange = function(){
 		//writelog("readyState("+path+"):"+req.readyState);
@@ -312,12 +402,18 @@ var editorContainer = document.getElementById("editorcontainer");
 var uploadContainer = document.getElementById("uploadcontainer");
 function folderClick(event)
 {
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
 	folderWalk(event.target.innerText);
 }
 
 function delClick(event)
 {
-	delfile(event.target.data);
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
+	delfile(event.target.data || event.srcElement.data);
 }
 var editpath = "";
 function saveEdit()
@@ -325,12 +421,12 @@ function saveEdit()
 	var text = document.getElementById("editor").value;
 	writelog("Saving file: " + editpath);
 	synclog();
-	var req = new XMLHttpRequest();
+	var req = getXMLHttpRequest();
 	req.open("PUT", editpath, true);
 	req.onreadystatechange = function(){
 		writelog("readyState("+editpath+"):"+req.readyState);
-		if (req.readyState === XMLHttpRequest.DONE) {
-			const status = req.status;
+		if (req.readyState === XMLHttpRequest_DONE) {
+			var status = req.status;
 			//writelog("status("+path+"):"+status);
 
 
@@ -341,40 +437,35 @@ function saveEdit()
 		}
 		synclog();
 	};
-	req.send(new Blob([text],{type:"text/plain"}));
+	if('Blob' in window)
+		req.send(new Blob([text],{type:"text/plain"}));
+	else
+		req.send(text);
 }
-
 
 function editClick(event)
 {
-	var req = new XMLHttpRequest();
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
+
 	writelog("Editing file: " + event.target.data);
 	synclog();
 	editpath = event.target.data;
+	var req = getXMLHttpRequest();
 	req.open("GET", event.target.data, true);
-	req.onprogress = function(event)
-	{
-		if(event.loaded > 65535)
-		{
-			req.abort();
-		}
-	
-		writelog(event.loaded);
-	}
+
 	req.onreadystatechange = function(){
 		writelog("readyState("+event.target.data+"):"+req.readyState);
-		if (req.readyState === XMLHttpRequest.DONE) {
-			const status = req.status;
-			//writelog("status("+path+"):"+status);
+		if (req.readyState === XMLHttpRequest_DONE) {
+				var status = req.status;
+			writelog("status():"+status);
 
 
-			if ((status === 0 || (status >= 200 && status < 400)) && req.response.length > 0 && req.response.length < 65535) {
-				writelog("sizes: "+ size + " " + strlen);
+			if ((status === 0 || (status >= 200 && status < 400)) && req.responseText.length > 0 && req.responseText.length < 65535) {
 				document.getElementById("editor").value = req.responseText;
 				editorContainer.style.display = 'block';
 				uploadContainer.style.display = 'none';
-				var size = req.response.length;
-				var strlen = req.responseText.length;
 			}
 		}
 		synclog();
@@ -396,6 +487,9 @@ function delDirClick(event)
 
 function zipClick(event)
 {
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
 	var a = document.createElement("a");
 	a.href = event.target.data;
 	a.appendChild(document.createTextNode("Download zip " + event.target.data));
@@ -406,12 +500,12 @@ function zipClick(event)
 
 function mkdirClick()
 {
-	var req = new XMLHttpRequest();
+	var req = getXMLHttpRequest();
 	var path= prompt("Folder name", "");
 	req.open("MKCOL", "/files/"+list_path+(list_path.length >0?"/":"")+path+ "/", true);
 	req.onreadystatechange = function(){
-		if (req.readyState === XMLHttpRequest.DONE) {
-			const status = req.status;
+		if (req.readyState === XMLHttpRequest_DONE) {
+				var status = req.status;
 			//writelog("status("+path+"):"+status);
 	
 			writelog(status);
@@ -426,15 +520,18 @@ function mkdirClick()
 
 function moveClick(event)
 {
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
 	var newName = prompt("New filename", event.target.data);
 	if(newName.indexOf("/") < 0)
 		newName = "/files/"+list_path+(list_path.length >0?"/":"")+newName;
-	var req = new XMLHttpRequest();
+	var req = getXMLHttpRequest();
 	req.open("MOVE", event.target.data, true);
 	req.setRequestHeader("Destination", newName);
 	req.onreadystatechange = function(){
-		if (req.readyState === XMLHttpRequest.DONE) {
-			const status = req.status;
+		if (req.readyState === XMLHttpRequest_DONE) {
+				var status = req.status;
 			//writelog("status("+path+"):"+status);
 	
 			writelog(status);
@@ -452,7 +549,7 @@ function updateList()
 	if(oldFileList)
 		fileListContainer.removeChild(oldFileList);
 	oldFileList = null;
-	var req = new XMLHttpRequest();
+	var req = getXMLHttpRequest();
 	if(list_path.length)
 		pathDisplay.innerText = list_path;
 	else
@@ -461,13 +558,15 @@ function updateList()
 	synclog();
 	req.open("GET", "/list/"+list_path, true);
 	req.onreadystatechange = function(){
-		//writelog("readyState("+path+"):"+req.readyState);
-		if (req.readyState === XMLHttpRequest.DONE) {
-			const status = req.status;
-			//writelog("status("+path+"):"+status);
+		writelog("readyState("+list_path+"):"+req.readyState + " "+ XMLHttpRequest_DONE);
+		synclog();
+		if (req.readyState === 4) {
+				var status = req.status;
+			writelog("status("+list_path+"):"+status);
+			synclog();
+			try{
 
-
-			if ((status === 0 || (status >= 200 && status < 400))) {
+			if ((status === -1 || status === 0 || (status >= 200 && status < 400))) {
 				var tbl = document.createElement("table");
 				tbl.setAttribute("border", "2");
 				var tbd = document.createElement("tbody");
@@ -488,8 +587,10 @@ function updateList()
 				tbd.appendChild(row);
 
 				//var str = "<a  onclick=\"folderUp();\">..</a><br>"
-				for(item of JSON.parse(req.responseText))
+				var arr = parseJSON(req.responseText);
+				for(var i = 0; i < arr.length; i++)
 				{
+					var item = arr[i];
 					if(item.type == 1)
 					{
 						row = document.createElement("tr");
@@ -576,21 +677,28 @@ function updateList()
 
 			} else {
 			}
+			}catch(e){writelog(e);synclog();}
 		}
 	}
 	req.send();
 	
 }
 updateList();
-document.getElementById("files").addEventListener("change", function(e) {
-	processFiles(e.target.files);
-});
-document.getElementById("file").addEventListener("change", function(e) {
-	processFiles(e.target.files);
-});
-document.getElementById("zipfile").addEventListener("change", function(e) {
+document.getElementById("files").onchange = function(event) {
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
+	processFiles(event.target.files);
+};
+document.getElementById("file").onchange = function(event) {
+	if(!event) event = window.event;
+	if(!event.target)
+		event.target = event.srcElement;
+	processFiles(event.target.files);
+};
+document.getElementById("zipfile").onchange = function(event) {
 	// TODO: zip
-});
+};
 uploadButton.onclick = startUpload;
 uploadButton.disabled = true;
 </script>
