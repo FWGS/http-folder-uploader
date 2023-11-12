@@ -85,13 +85,25 @@ void create_directories(const char *path)
 #define MAX_RESP_SIZE 32768
 void serve_file(const char *path, char *buffer, int newsockfd, const char *mime, int binary)
 {
-	char resp_head[256] = "";
+	char resp_head[512] = "";
 	char resp[MAX_RESP_SIZE] = "";
+	struct stat sb;
+	stat(path,&sb);
 	int fd = open(path, O_RDONLY);
-	int resp_len = snprintf(resp_head, 255,
+	const char *fname = strrchr(path, '/');
+	if(!fname) fname = path;
+	else fname++;
+	
+	
+	int resp_len = snprintf(resp_head, 511,
 							"HTTP/1.1 200 OK\r\n"
 							"Server: webserver-c\r\n"
-							"Content-type: %s\r\n\r\n", mime);
+							"etag: %d-%d\r\n"
+							"Content-Type: %s\r\n"
+							"Content-Length: %d\r\n"
+							"Accept-Ranges: bytes\r\n"
+							"Date: Sat, 11 Nov 2023 21:55:54 GMT\r\n"
+							"Content-Disposition : inline; filename=\"%s\"\r\n\r\n", (int)time(0), (int)sb.st_size, mime, (int)sb.st_size, fname );
 
 	if( fd < 0 ) return;
 
@@ -124,9 +136,9 @@ void serve_list(const char *path, char *buffer, int fd)
 		plen = 1;
 	}
 	const char resp_list[] =
-		"HTTP/1.1200 OK\r\n"
+		"HTTP/1.1 200 OK\r\n"
 		"Server: webserver-c\r\n"
-		"Content-Type: application/json\r\n\r\n[\n";
+		"Content-Type: text/plain\r\n\r\n[\n";
 	DIR *dirp;
 	writeall(fd, resp_list, sizeof(resp_list) - 1);
 	printf("list %s\n", path);
@@ -170,19 +182,20 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 	char resp[MAX_RESP_SIZE];
 	char fpath[PATH_MAX] = {};
 	int len_dir = 0, len_fil = 0;
+	char *path2 = path;
 	int plen = strlen(path);
 	if(!plen)
 	{
-		path = ".";
+		path2 = ".";
 		plen = 1;
 	}
 	const char resp_list[] =
-		"HTTP/1.1 200 OK\r\n"
+		"HTTP/1.1 207 Multi-Status\r\n"
 		"Server: webserver-c\r\n"
 		"Content-Type: text/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">";
 	DIR *dirp;
-	printf("list %s\n", path);
-	dirp = opendir(path);
+	printf("list %s\n", path2);
+	dirp = opendir(path2);
 	if (!dirp)
 	{
 		const char resp_list1[] =
@@ -192,6 +205,7 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 			"Content-Length: 0\r\n"
 			"\r\n";
 			//"Content-Type: text/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\" >";
+		//usleep(10000);
 		writeall(fd, resp_list1, sizeof(resp_list1) - 1);
 		write(1, resp_list1, sizeof(resp_list1) - 1);
 		printf("bad dir %s %d\n", path, errno);
@@ -200,7 +214,7 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 	}
 	if( plen > PATH_MAX - 2)
 		plen = PATH_MAX - 2;
-	strncpy(fpath, path, plen);
+	strncpy(fpath, path2, plen);
 	/*len_dir += snprintf(
 		&resp_dir[0] + len_dir, MAX_RESP_SIZE - len_dir,
 		"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
@@ -229,7 +243,7 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 			}
 			break;
 		}
-		if (dp->d_name[0] == '.')// && !dp->d_name[1])
+		if (dp->d_name[0] == '.' && (dp->d_name[1] == '.' || !dp->d_name[1]))// && !dp->d_name[1])
 			continue;
 		strncpy(&fpath[plen], dp->d_name, PATH_MAX - plen - 1);
 		if (stat(fpath, &sb) != 0)
@@ -237,6 +251,17 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 		if(!dirflag)
 		{
 			writeall(fd, resp_list, sizeof(resp_list) - 1);
+			/*int len = snprintf(resp, MAX_RESP_SIZE - 1,
+				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
+				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
+				"<D:displayname>%s</D:displayname>"
+				//"<D:getetag>\"01572461888\"</D:getetag>"
+				"<D:getlastmodified>Wed, 30 Oct 2019 18:58:08 GMT</D:getlastmodified>"
+				"<D:resourcetype><D:collection/></D:resourcetype>"
+				//"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes>"
+				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
+				"", "files");
+			writeall(fd, resp, len);*/
 			dirflag = 1;
 		}
 		printf("dir %s %s %d %d\n", fpath, dp->d_name, len_fil, len_dir);
@@ -246,26 +271,29 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 			int len = snprintf(resp, MAX_RESP_SIZE - 1,
 				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
+				"<D:displayname>%s</D:displayname>"
 				//"<D:getetag>\"01572461888\"</D:getetag>"
 				"<D:getlastmodified>Wed, 30 Oct 2019 18:58:08 GMT</D:getlastmodified>"
 				"<D:resourcetype><D:collection/></D:resourcetype>"
 				//"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes>"
 				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
-				fpath);
+				fpath, dp->d_name);
 			writeall(fd, resp, len);
 		}
-		else
+		else if(1)
 		{
 			int len = snprintf(
 				resp, MAX_RESP_SIZE - 1,
 				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
+				"<D:displayname>%s</D:displayname>"
 				"<D:getcontentlength>%d</D:getcontentlength>"
 				//"<D:getetag>\"01572461888\"</D:getetag>"
 				"<D:getlastmodified>Wed, 30 Oct 2019 18:58:08 GMT</D:getlastmodified>"
-				"<D:resourcetype /><d:getcontenttype>text/plain</d:getcontenttype>"
+				"<D:resourcetype />"
+				//"<d:getcontenttype>text/plain</d:getcontenttype>"
 				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
-				fpath, (int)sb.st_size);
+				fpath, dp->d_name, (int)sb.st_size);
 			writeall(fd, resp, len);
 		}
 
@@ -279,15 +307,16 @@ void serve_path_dav(const char *path, char *buffer, int fd)
 {
 	char resp_dir[MAX_RESP_SIZE];
 	int len_dir = 0;
+	const char *path2 = path;
 	int plen = strlen(path);
 	struct stat sb;
 
 	if(!plen)
 	{
-		path = ".";
+		path2 = ".";
 		plen = 1;
 	}
-	int s = stat(path, &sb);
+	int s = stat(path2, &sb);
 /*	if(path[0] == '.')
 	{
 		const char resp_list1[] =
@@ -312,9 +341,11 @@ void serve_path_dav(const char *path, char *buffer, int fd)
 
 	}
 	const char resp_list[] =
-		"HTTP/1.1 200 OK\r\n"
+		"HTTP/1.1 207 Multi-Status\r\n"
 		"Server: webserver-c\r\n"
+		//"Content-Length: 573\r\n"
 		"Content-Type: application/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">";
+	
 	writeall(fd, resp_list, sizeof(resp_list) - 1);
 
 
@@ -328,8 +359,8 @@ void serve_path_dav(const char *path, char *buffer, int fd)
 		"%s"
 		"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>",
 		path, (!S_ISDIR(sb.st_mode))?(int)sb.st_size:0,
-		 S_ISDIR(sb.st_mode)?"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes><D:resourcetype><D:collection/></D:resourcetype>":"<D:resourcetype /><d:getcontenttype>text/plain</d:getcontenttype>");
-
+		 S_ISDIR(sb.st_mode)?"<D:resourcetype><D:collection/></D:resourcetype>":"<D:resourcetype /><d:getcontenttype>text/plain</d:getcontenttype>");
+	printf("clen %d\n", (int)(strlen("<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">") + len_dir));
 	write(1, resp_dir, len_dir);
 	writeall(fd, resp_dir, len_dir);
 }
@@ -458,9 +489,13 @@ int main() {
 						//printf("transfer %d\n",(int)valread);
 						write(fd, buffer, valread);
 					}
-					else break;
+					else
+					{
+//						printf("end %d\n", errno);
+						break;
+					}
 				}
-				//printf("done %s\n", path);
+				printf("done %s\n", path);
 				ftruncate(fd,filelen);
 				close(fd);
 				const char resp_ok_beg[] = "HTTP/1.1 201 Created\r\n"
@@ -529,21 +564,67 @@ int main() {
 			else
 			{
 				path += 7;
-				serve_file(path, buffer, newsockfd, "text/plain", 1);
+				serve_file(path, buffer, newsockfd, "application/octet-stream", 1);
 			}
 
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "HEAD"))
 		{
-			if(strncmp(uri, "/files", 6))
-			{
+			char *path = uri;
 				const char resp_ok[] = "HTTP/1.1 200 OK\r\n"
 									   "Server: webserver-c\r\n"
-									   "Content-type: text/html\r\n\r\n"
-									   "";
-				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+									   "Content-type: text/plain\r\n"
+									   "\r\n";//"Content-Length: ";
+			const char resp_nf[] = "HTTP/1.1 404 Not found\r\n"
+			"Server: webserver-c\r\n"
+			"Content-Length:0\r\n"
+			"\r\n";
+			int filelen = valread - he;
+			//usleep(15000);
+
+			while( filelen < clen )
+			{
+				int readlen = clen - filelen;
+				if( readlen > BUFFER_SIZE )
+					readlen = BUFFER_SIZE;
+				valread = read( newsockfd, buffer, readlen );
+				if(valread > 0)
+				{
+					filelen += valread;
+					//printf("transfer %d\n",(int)valread);
+					write(1, buffer, valread);
+				}
+				else break;
 			}
+			
+			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
+			{
+				close(newsockfd);
+				continue;
+			}
+			path += 7;
+			struct stat sb;
+				if(!stat(path,&sb))
+				{
+					const char *fname = strrchr(path, '/');
+					if(!fname) fname = path;
+					else fname++;
+					
+					int resp_len = snprintf(buffer, 511,
+							"HTTP/1.1 200 OK\r\n"
+							"Server: webserver-c\r\n"
+							"etag: %d-%d\r\n"
+							"Content-Type: %s\r\n"
+							"Content-Length: %d\r\n"
+							"Accept-Ranges: bytes\r\n"
+							"Date: Sat, 11 Nov 2023 21:55:54 GMT\r\n"
+							"Content-Disposition : inline; filename=\"%s\"\r\n\r\n", (int)time(0), (int)sb.st_size, "text/plain", (int)sb.st_size, fname );
+					writeall(newsockfd, buffer, resp_len);
+					printf("HEAD %s %s %d\n", path, fname, (int)sb.st_size);
+				}
+				else
+					writeall(newsockfd, resp_nf, sizeof(resp_nf) - 1);
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "MKCOL"))
@@ -562,6 +643,7 @@ int main() {
 			path += 7;
 			create_directories(path);
 			mkdir(path, 0777);
+			//usleep(10000);
 
 			int filelen = valread - he;
 			while( filelen < clen )
@@ -683,7 +765,7 @@ int main() {
 			}*/
 			if(strncmp(path, "/files", 6) || strstr(path, ".."))
 			{
-				serve_path_dav(".", buffer, newsockfd);
+				serve_path_dav("", buffer, newsockfd);
 				close(newsockfd);
 				continue;
 			}
@@ -702,11 +784,12 @@ int main() {
 		}
 		else if(!strcmp(method, "OPTIONS"))
 		{
-			const char resp_ok[] = "HTTP/1.1 200 OK\r\n"
+			const char resp_ok[] = "HTTP/1.1 200 OK\r\nAllow: GET,HEAD,PUT,OPTIONS,DELETE,PROPFIND,COPY,MOVE\r\nDAV: 1,2\r\nContent-Length: 0\r\n\r\n";
+			/*"HTTP/1.1 200 OK\r\n"
 			"Content-Type: text/plain\r\n"
 			"Access-Control-Allow-Methods: PROPFIND, PROPPATCH, COPY, MOVE, DELETE, MKCOL, PUT, UNLOCK, GETLIB, VERSION-CONTROL, CHECKIN, CHECKOUT, UNCHECKOUT, REPORT, UPDATE, CANCELUPLOAD, HEAD, OPTIONS, GET, POST\r\n"
 			"Access-Control-Allow-Headers: Overwrite, Destination, Content-Type, Depth, User-Agent, X-File-Size, X-Requested-With, If-Modified-Since, X-File-Name, Cache-Control\r\n"
-			"Access-Control-Max-Age: 86400\r\n\r\n";
+			"Access-Control-Max-Age: 86400\r\n\r\n";*/
 			if( valread >= 0)
 				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
 			close(newsockfd);
@@ -720,9 +803,26 @@ int main() {
 			lock_token[17] += count++ % 10;
 #else
 			char lock_token [] = "1699659945";
-			sprintf(lock_token,"%d",(int)time(0));
+			sprintf(lock_token,"%d", (int)time(0));//(int)count++);//time(0));
 			//lock_token[1] += count++ % 10;
 #endif
+			//usleep(5000);
+			int filelen = valread - he;
+			//printf("transfer0 %d\n",(int)valread);
+			while( filelen < clen )
+			{
+				int readlen = clen - filelen;
+				if( readlen > BUFFER_SIZE )
+					readlen = BUFFER_SIZE;
+				valread = read( newsockfd, buffer, readlen );
+				if(valread > 0)
+				{
+					filelen += valread;
+					//printf("transfer %d\n",(int)valread);
+					write(1, buffer, valread);
+				}
+				else break;
+			}
 			
 
 			snprintf(resp_lock, 1023, "HTTP/1.1 200 OK\r\n"
