@@ -12,11 +12,12 @@ function synclog()
 	pagelog.scrollTop = pagelog.scrollHeight;
 }
 
-function writelog(text)
+function writelog(text,sync)
 {
     if(globallog.length > 32768)
         globallog = globallog.substring(16384);
     globallog += ""+text+"\n";
+	if(sync)synclog();
     //document.getElementById("pagelog").innerText = log
 }
 
@@ -266,7 +267,6 @@ function uploadFile(file)
 	var req = getXMLHttpRequest();
 	var path = (file.filepath|| file.webkitRelativePath || file.name);
 	writelog("uploading:"+path);
-	//synclog();
 	req.open("PUT", "/files/"+list_path+(list_path.length >0?"/":"")+path, true);
 	req.onreadystatechange = function(){
 		//writelog("readyState("+path+"):"+req.readyState);
@@ -279,8 +279,7 @@ function uploadFile(file)
 
 			} else {
 				pendingfiles.push(file);
-				writelog("error:"+path);
-				synclog();
+				writelog("error:"+path, true);
 			}
  			var index = uploadingfiles.indexOf(file);
 			if(index >= 0)
@@ -388,8 +387,7 @@ function folderWalk(name)
 function folderUp()
 {
 	var i = list_path.lastIndexOf('/');
-	writelog(i);
-	synclog();
+	writelog(i, true);
 	list_path = i >= 0?list_path.substring(0,i):"";
 	updateList();
 }
@@ -419,8 +417,7 @@ var editpath = "";
 function saveEdit()
 {
 	var text = document.getElementById("editor").value;
-	writelog("Saving file: " + editpath);
-	synclog();
+	writelog("Saving file: " + editpath, true);
 	var req = getXMLHttpRequest();
 	req.open("PUT", editpath, true);
 	req.onreadystatechange = function(){
@@ -506,10 +503,7 @@ function mkdirClick()
 	req.onreadystatechange = function(){
 		if (req.readyState === XMLHttpRequest_DONE) {
 				var status = req.status;
-			//writelog("status("+path+"):"+status);
-	
-			writelog(status);
-			synclog();
+			writelog(status, true);
 			if ((status === 0 || (status >= 200 && status < 400))) {
 				updateList();
 			}
@@ -532,10 +526,7 @@ function moveClick(event)
 	req.onreadystatechange = function(){
 		if (req.readyState === XMLHttpRequest_DONE) {
 				var status = req.status;
-			//writelog("status("+path+"):"+status);
-	
-			writelog(status);
-			synclog();
+			writelog(status, true);
 			if ((status === 0 || (status >= 200 && status < 400))) {
 				updateList();
 			}
@@ -554,16 +545,12 @@ function updateList()
 		pathDisplay.innerText = list_path;
 	else
 		pathDisplay.innerText = "(root)";
-	writelog("Listing files: " + "/list/"+list_path);
-	synclog();
+	writelog("Listing files: " + "/list/"+list_path, true);
 	req.open("GET", "/list/"+list_path, true);
 	req.onreadystatechange = function(){
-		writelog("readyState("+list_path+"):"+req.readyState + " "+ XMLHttpRequest_DONE);
-		synclog();
-		if (req.readyState === 4) {
+		if (req.readyState === XMLHttpRequest_DONE) {
 				var status = req.status;
-			writelog("status("+list_path+"):"+status);
-			synclog();
+			writelog("status("+list_path+"):"+status, true);
 			try{
 
 			if ((status === -1 || status === 0 || (status >= 200 && status < 400))) {
@@ -677,7 +664,7 @@ function updateList()
 
 			} else {
 			}
-			}catch(e){writelog(e);synclog();}
+			}catch(e){writelog(e, true);}
 		}
 	}
 	req.send();
