@@ -7,7 +7,7 @@ var pagelog;
 function synclog()
 {
     if(!pagelog)
-	pagelog = document.getElementById("pagelog");
+		pagelog = document.getElementById("pagelog");
     pagelog.value = globallog;
 	pagelog.scrollTop = pagelog.scrollHeight;
 }
@@ -18,12 +18,76 @@ function writelog(text,sync)
         globallog = globallog.substring(16384);
     globallog += ""+text+"\n";
 	if(sync)synclog();
-    //document.getElementById("pagelog").innerText = log
 }
 
+Object.keys = Object.keys || (function () {
+    var hasOwnProperty = Object.prototype.hasOwnProperty,
+        hasDontEnumBug = !{toString:null}.propertyIsEnumerable("toString"),
+        DontEnums = [ 
+            'toString', 'toLocaleString', 'valueOf', 'hasOwnProperty',
+            'isPrototypeOf', 'propertyIsEnumerable', 'constructor'
+        ],
+        DontEnumsLength = DontEnums.length;
+        
+    return function (o) {
+        if (typeof o != "object" && typeof o != "function" || o === null)
+            throw new TypeError("Object.keys called on a non-object");
+    
+        var result = [];
+        for (var name in o) {
+            if (hasOwnProperty.call(o, name))
+                result.push(name);
+        }
+    
+        if (hasDontEnumBug) {
+            for (var i = 0; i < DontEnumsLength; i++) {
+                if (hasOwnProperty.call(o, DontEnums[i]))
+                    result.push(DontEnums[i]);
+            }   
+        }
+    
+        return result;
+    };
+})();
+
+
+function writeerror(e)
+{
+	var text = "Exception: "
+	try{
+		text += "" + e;
+	}catch(e){}
+	try{
+		text += " " + e.name;
+	}catch(e){}
+	try{
+		text += " " + e.message;
+	}catch(e){}
+	try{
+		if(e.description)
+			text += " " + e.description;
+	}catch(e){}
+	try{
+		if(e.method)
+			text += " " + e.method;
+	}catch(e){}
+	try{
+		text += " " + e.fileName + ":" + (e.lineNumber || e.number) ;
+	}catch(e){}
+	try{
+		if(e.stack)
+			text += " " + e.stack;
+	}catch(e){}
+	// hack: rethrow error for onerror and browser-internal handler
+	try{
+		setTimeout(function(){throw(e);},100);
+		writelog(Object.keys(e), true);
+	}catch(e){}
+	writelog(text, true);
+}
 </script>
 </head>
-<body onerror="writelog(event);synclog();">
+<body onerror="writelog(event, true);writelog(event.message, true);">
 <style>
 
 html, body {
@@ -37,7 +101,9 @@ body {
   /*max-width: 1024px;
   min-width: 768px;*/
   min-width: 600px;
-  margin: 0 auto; }
+  margin: 0 auto;
+  font: 12px sans-serif;
+}
 
 header {
   color: #fff;
@@ -45,7 +111,7 @@ header {
   height: 24px;
   overflow: hidden; }
 
-td {
+.sidebar td {
   color: #fff;
   background-color: #000;
  }
@@ -76,37 +142,74 @@ color: #FFC;
   background-color: #f5f5f5;
   position: absolute;
   left: 50%;
+  width: 50%;
   right: 0;
-  padding: 20px;
+  /*padding: 20px;*/
   padding-bottom:25px; }
 
 </style>
-<header><div style="position:absolute;overflow:hidden" id="pathdisplay"></div><div style="position:absolute;right:0px;overflow:hidden">Dir:<input
-      type="file"
-      directory="directory"
-      multiple
-      webkitdirectory="webkitdirectory"
-      id="files" size="4" style="font:40% sans-serif;"
-    />File:
-<input
-      type="file"
-      multiple
-      id="file"  size="4" style="font:40% sans-serif"
-    />Zip:<input type="file" id="zipfile" height="24px" width="40px"  size="4" style="font:40% sans-serif;"/>
-<button id="mkdir" onclick="mkdirClick()">mkdir</button>
-<button id="upload" disabled>Upload</button>
+<header><div style="position:absolute;overflow:hidden;color:white" id="pathdisplay"></div><div style="position:absolute;right:0px;overflow:hidden">
+<input type="checkbox" id="enable_fileapi"/><label for="enable_fileapi" style="color:white;">Enable FileList API</label>
+<input type="checkbox" id="enable_xhr"/><label for="enable_xhr"  style="color:white;">Enable XHR</label>
+<button id="mkdir" onclick="mkdirClick()">Create Directory</button>
+<button id="mkfile"  onclick="createFile();">Create File</button>
 
 </div>
 </header>
-<div class="sidebar"><div id="filelist"></div></div>
+<div class="sidebar"><div id="filelist"></div><iframe src="/list/col1/" width="100%" height="100%" style="border:0;padding:0;" loading="lazy" id="legacyframe"></iframe></div>
 <div class="main" id="uploadcontainer">	
+<table border="0" height="100%">
+<tr><td><form><label for="filesdir">Upload&nbsp;dir:</label><br />
+<input id="filesdir" name=filesdir
+      type="file"
+      directory="directory"
+      multiple
+	  size="4"
+      webkitdirectory="webkitdirectory"  style="font:40% sans-serif;max-width:100px" disabled />
+<input type="button" value="Upload" disabled id="upload" onclick="startUpload()" /></form></td><td  style="vertical-align: top;">
+<form  id="legacyupload" method="POST" action="/legacyupload" encoding="multipart/form-data" enctype="multipart/form-data"><label for="file">Upload&nbsp;file:</label><br />
+<input id="file" name="file"
+      type="file" 
+      multiple size="4" style="font:40% sans-serif;max-width:100px" />
+<input type="submit" value="Send" id="uploadlegacy"/></form></td>
+<td  style="vertical-align: top;"><form  id="zipform" method="POST" action="/legacyzip" encoding="multipart/form-data" enctype="multipart/form-data"><label for="zipfile">Upload&nbsp;zip:</label><br />
+<input id="zipfile" name="zipfile"
+      type="file"
+ size="4" style="font:40% sans-serif;max-width:100px" />
+<input type="submit" value="Extract" id="uploadzip"/></form></td>
+<td border="0" width="100%" cellspacing="0"></td><td border="0" width="0" cellspacing="0"></td></tr><tr>
+<td height="100%" width="100%" colspan="4">
 <div id="dropcontainer" style="border:1px solid black;width:100%;height:75%;">Drop here</div><textarea id="pagelog"  style="width:100%;height:25%;resize:none;"></textarea>
 </div>
+</td><td border="0" cellspacing="0" style="width:0;border-color:#f5f5f5;border-width:0;padding:0;"><div style="height:200px;width:0;overflow:hidden;padding:0;" ><br/></div></td>
+</tr></table></div>
 <div id="editorcontainer" class="main" style="padding-bottom:40px;overflow:hidden;display:none">
 <button onclick="saveEdit();">Save</button><button onclick="cancelEdit();">Cancel</button><br/>
 <textarea id="editor" style="width:100%;height:100%;resize:none;"></textarea>
 </div>	
 </div>
+<!--[if IE]>
+<script>
+window.onresize = document.body.onload =  function()
+{
+	uploadContainer.style.height = document.body.clientHeight - 26;
+	if(oldFileList)
+		oldFileList.style.height = document.body.clientHeight - 26;
+	fileListContainer.parentNode.style.height = document.body.clientHeight - 26;
+}
+</script>
+<![endif]-->
+
+<script>
+window.onerror = function(msg, url, lno) {
+	
+	writelog("Error handler:" + "\n" +
+		"Error: " + msg + "\n" + "URL: " + url + "\n" +
+		"Line Number: " + lno, true);
+	
+	return false; // let browser print error to
+}
+</script>
 
 
 <script>
@@ -122,6 +225,16 @@ function parseJSON(text)
 	else return eval("("+text+")");
 }
 
+if(('navigator' in window) && window.navigator && window.navigator.userAgent.indexOf("ELinks") >= 0)
+{
+	writelog = alert;
+	XMLHttpRequest.prototype.open_orig = XMLHttpRequest.prototype.open;
+	XMLHttpRequest.prototype.open = function(a,b,c)
+	{
+		this.open_orig(a,document.location.href + b.substring(1),c);
+	};
+}
+
 function getXMLHttpRequest()
 {
 	var xhr = null;
@@ -131,12 +244,22 @@ function getXMLHttpRequest()
 	else if(window.ActiveXObject) { // poor alternative, but at least filelist and editing works
 		try {
 			xhr = new ActiveXObject("Msxml2.XMLHTTP");
+			xhr.open("GET","/", true); // it may throw DLLError
+			xhr = new ActiveXObject("Msxml2.XMLHTTP");
 		} catch(e) {
-			xhr = new ActiveXObject("Microsoft.XMLHTTP");
+			writeerror(e);
+			try {
+				xhr = new ActiveXObject("Microsoft.XMLHTTP");
+			}
+			catch(e) {
+				writeerror(e);
+			}
 		}
 	}
 	else
-		alert("Your browser doesn't support XMLHTTPRequest...");
+	{
+		writelog("Your browser doesn't support XMLHTTPRequest...", true);
+	}
 	return xhr;
 }
 
@@ -162,12 +285,16 @@ dropContainer.ondrop = function(event) {
 		event.preventDefault();
  	if('Promise' in window && event.dataTransfer && event.dataTransfer.items && event.dataTransfer.items[0].webkitGetAsEntry)
 	{
+		writelog("Drop event, using async mode", true);
 		processDTItemsAsync(event.dataTransfer.items).then(function(files){
 			processFiles(files);
 		});
 	}
 	else
+	{
+		writelog("Drop event, using sync mode (slow)", true);
 		processDTItems(event.dataTransfer);
+	}
 	return false;
 };
 
@@ -244,6 +371,7 @@ function processDTItems(dataTransfer)
 	if(!items || !items[0].webkitGetAsEntry)
 	{
 		// this cannot handle folders at all
+		writelog("no DataTransder items, folders will fail...", true);
 		processFiles(dataTransfer.files);
 		return;
 	}
@@ -327,13 +455,6 @@ function scheduleUpload()
 
 function processFiles(files)
 {
-	/*for(var file of files)
-		writelog(file.filepath|| file.webkitRelativePath);
-	var req = new XMLHttpRequest();
-	req.open("PUT", "/files/"+(file.filepath|| file.webkitRelativePath), true);
-	console.log(file.size);
-	req.send(file)
-	synclog();*/
 	if(pendingfiles.length)
 		return;	
 	if(selectedfiles.length)
@@ -350,7 +471,6 @@ function startUpload()
 {
 	pendingfiles = selectedfiles;
 	uploadButton.disabled = true;
-	uploadButton.innerText = "Upload";
 	if(oldFileList)
 		fileListContainer.removeChild(oldFileList);
 	oldFileList = null;
@@ -398,12 +518,14 @@ var pathDisplay = document.getElementById("pathdisplay");
 var uploadButton = document.getElementById("upload");
 var editorContainer = document.getElementById("editorcontainer");
 var uploadContainer = document.getElementById("uploadcontainer");
+
+
 function folderClick(event)
 {
 	if(!event) event = window.event;
 	if(!event.target)
 		event.target = event.srcElement;
-	folderWalk(event.target.innerText);
+	folderWalk(event.target.data);
 }
 
 function delClick(event)
@@ -427,9 +549,10 @@ function saveEdit()
 			//writelog("status("+path+"):"+status);
 
 
-			if ((status === 0 || (status >= 200 && status < 400)) && req.responseText == "OK") {
+			if ((status === 0 || (status >= 200 && status < 400))) {
 				editorContainer.style.display = 'none';
 				uploadContainer.style.display = 'block';
+				updateList();
 			}
 		}
 		synclog();
@@ -440,36 +563,46 @@ function saveEdit()
 		req.send(text);
 }
 
+function editFile(path)
+{
+	editpath = path;
+	writelog("Editing file: " + editpath, true);
+	var req = getXMLHttpRequest();
+	req.open("GET", editpath, true);
+	editorContainer.style.display = 'block';
+	uploadContainer.style.display = 'none';
+
+	req.onreadystatechange = function(){
+		writelog("edreadyState("+editpath+"):"+req.readyState);
+		if (req.readyState == XMLHttpRequest_DONE) {
+				var status = req.status;
+			writelog("edstatus():"+status);
+
+
+			if ((status === 0 || (status >= 200 && status < 400)) && req.responseText.length >= 0 && req.responseText.length < 65535) {
+				document.getElementById("editor").value = req.responseText;
+			}
+		}
+		synclog();
+	};
+	req.send("");
+}
+
 function editClick(event)
 {
 	if(!event) event = window.event;
 	if(!event.target)
 		event.target = event.srcElement;
 
-	writelog("Editing file: " + event.target.data);
-	synclog();
-	editpath = event.target.data;
-	var req = getXMLHttpRequest();
-	req.open("GET", event.target.data, true);
+	editFile(event.target.data);
+}
 
-	req.onreadystatechange = function(){
-		writelog("readyState("+event.target.data+"):"+req.readyState);
-		if (req.readyState === XMLHttpRequest_DONE) {
-				var status = req.status;
-			writelog("status():"+status);
-
-
-			if ((status === 0 || (status >= 200 && status < 400)) && req.responseText.length > 0 && req.responseText.length < 65535) {
-				document.getElementById("editor").value = req.responseText;
-				editorContainer.style.display = 'block';
-				uploadContainer.style.display = 'none';
-			}
-		}
-		synclog();
-	};
-	req.send();
-	//editorContainer.style.display = 'block';
-	//uploadContainer.style.display = 'none';
+function createFile()
+{
+	editpath ="/files/"+list_path+(list_path.length >0?"/":"")+prompt("New file name", "");
+	editorContainer.style.display = 'block';
+	uploadContainer.style.display = 'none';
+	document.getElementById("editor").value = "";
 }
 
 function cancelEdit()
@@ -499,6 +632,8 @@ function mkdirClick()
 {
 	var req = getXMLHttpRequest();
 	var path= prompt("Folder name", "");
+	if(!path || !path.length)
+		return;
 	req.open("MKCOL", "/files/"+list_path+(list_path.length >0?"/":"")+path+ "/", true);
 	req.onreadystatechange = function(){
 		if (req.readyState === XMLHttpRequest_DONE) {
@@ -509,7 +644,7 @@ function mkdirClick()
 			}
 		}
 	}
-	req.send();
+	req.send("");
 }
 
 function moveClick(event)
@@ -518,6 +653,8 @@ function moveClick(event)
 	if(!event.target)
 		event.target = event.srcElement;
 	var newName = prompt("New filename", event.target.data);
+	if(!newName || !newName.length)
+		return;
 	if(newName.indexOf("/") < 0)
 		newName = "/files/"+list_path+(list_path.length >0?"/":"")+newName;
 	var req = getXMLHttpRequest();
@@ -532,8 +669,11 @@ function moveClick(event)
 			}
 		}
 	}
-	req.send();
+	req.send("");
 }
+var legacyframe = document.getElementById("legacyframe");
+var enable_xhr = document.getElementById("enable_xhr");
+var enable_fileapi = document.getElementById("enable_fileapi");
 
 function updateList()
 {
@@ -541,12 +681,35 @@ function updateList()
 		fileListContainer.removeChild(oldFileList);
 	oldFileList = null;
 	var req = getXMLHttpRequest();
+	if(!req)
+	{
+		enable_xhr.checked = false;
+		enable_xhr.disabled = true;
+	}
+	if(!enable_xhr.checked)
+	{
+		legacyframe.style.display = "block";
+		legacyframe.src = "/list/"+list_path;
+		return;
+	}
 	if(list_path.length)
 		pathDisplay.innerText = list_path;
 	else
 		pathDisplay.innerText = "(root)";
 	writelog("Listing files: " + "/list/"+list_path, true);
-	req.open("GET", "/list/"+list_path, true);
+
+	try{
+		req.open("GET", "/list/"+list_path, true);
+	}
+	catch(e)
+	{
+		//enable_xhr.disabled = true;
+		enable_xhr.checked = false;
+		writeerror(e);
+		writelog("XHR disabled",true);
+		return;
+	}
+
 	req.onreadystatechange = function(){
 		if (req.readyState === XMLHttpRequest_DONE) {
 				var status = req.status;
@@ -624,6 +787,7 @@ function updateList()
 						cell = document.createElement("td");
 						link = document.createElement("a");
 						link.onclick = folderClick;
+						link.data = item.name;
 						link.appendChild(document.createTextNode(item.name));
 						cell.appendChild(link);
 						row.appendChild(cell);
@@ -657,37 +821,107 @@ function updateList()
 				}
 				tbl.appendChild(tbd);
 				//document.getElementById("filelist").innerHTML=str;
+				legacyframe.style.display = "none";
 
 				fileListContainer.appendChild(tbl);
+				//fileListContainer.parentNode.removeChild(document.getElementById("legacyframe"))
 				oldFileList = tbl;
 				
 
 			} else {
 			}
-			}catch(e){writelog(e, true);}
+			}catch(e){
+				writeerror(e);legacyframe.style.display = "block";}
 		}
 	}
-	req.send();
+	req.send("");
 	
 }
-updateList();
-document.getElementById("files").onchange = function(event) {
+
+
+enable_xhr.checked = true;
+enable_xhr.onclick = updateList;
+
+var filesdir = document.getElementById("filesdir")
+filesdir.onchange = function(event) {
 	if(!event) event = window.event;
 	if(!event.target)
 		event.target = event.srcElement;
 	processFiles(event.target.files);
 };
-document.getElementById("file").onchange = function(event) {
-	if(!event) event = window.event;
-	if(!event.target)
-		event.target = event.srcElement;
-	processFiles(event.target.files);
-};
-document.getElementById("zipfile").onchange = function(event) {
-	// TODO: zip
-};
-uploadButton.onclick = startUpload;
-uploadButton.disabled = true;
+
+function uploadZip()
+{
+	if(!enable_fileapi.checked)
+	{
+		try
+		{
+			document.getElementById("zipform").submit();
+		}
+		catch(e){writeerror(e);document.getElementById("uploadzip").onclick = null;}
+		return true;
+	}
+	// todo: XHR here
+	return false;
+}
+
+function updateFileAPI()
+{
+	var uploadzip = document.getElementById("uploadzip");
+	if(enable_fileapi.checked)
+	{
+		filesdir.disabled = false;
+		document.getElementById("uploadlegacy").style.display = "none";
+		uploadzip.disabled = document.getElementById("zipfile").files && document.getElementById("zipfile").files.length == 0;
+		uploadzip.onclick = uploadZip;
+		uploadButton.unclick = startUpload;
+	}
+	else
+	{
+
+		filesdir.disabled = true;
+		uploadButton.disabled = true;
+		document.getElementById("uploadlegacy").style.display = "block";
+		uploadzip.disabled = false;
+	}
+}
+
+try
+{
+	if("files" in filesdir && filesdir.files !== undefined)
+	{
+		enable_fileapi.checked = true;
+		enable_fileapi.disabled = false;
+	}
+	else
+	{
+		enable_fileapi.checked = false;
+		enable_fileapi.disabled = true;
+		writelog("Your browser does not support FileList API, POST request will be used");
+		writelog("Use ZIP files to upload folders", true);
+	}
+	updateList();
+}catch(e){writeerror(e);}
+try{
+	updateFileAPI();
+}catch(e){writeerror(e);}
+try{
+	enable_fileapi.onclick = updateFileAPI;
+
+
+	
+	document.getElementById("file").onchange = function(event) {
+		if(!event) event = window.event;
+		if(!event.target)
+			event.target = event.srcElement;
+		processFiles(event.target.files);
+	};
+	document.getElementById("zipfile").onchange = function(event) {
+		document.getElementById("uploadzip").disabled = document.getElementById("zipfile").files.length == 0;
+	};
+}catch(e){writeerror(e);}
+
+
 </script>
 
 
