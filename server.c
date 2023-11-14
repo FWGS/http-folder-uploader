@@ -14,9 +14,10 @@
 #include <dirent.h>
 #define PORT 8080
 #define BUFFER_SIZE 1024*16
+#define Error(...) fprintf(stderr, __VA_ARGS__)
+#define Report(...) fprintf(stderr, __VA_ARGS__)
 
-
-int writeall(int fd, const char *resp, size_t len)
+static int writeall(int fd, const char *resp, size_t len)
 {
 	size_t sent = 0;
 	do
@@ -32,7 +33,7 @@ int writeall(int fd, const char *resp, size_t len)
 	return sent;
 }
 
-int readheaders(int fd, char *buf, size_t len, int *headerend)
+static int readheaders(int fd, char *buf, size_t len, int *headerend)
 {
 	size_t received = 0;
 	do
@@ -65,6 +66,244 @@ int readheaders(int fd, char *buf, size_t len, int *headerend)
 
 	return -1;
 }
+static int ReadAll(int fd, char *data, size_t len)
+{
+	size_t received = 0;
+	do
+	{
+		int res = recv(fd, data + received, len - received, 0);
+		if( res >= 0)
+			received += res;
+		else
+			return res;
+	}
+	while(received < len);
+
+	return received;
+}
+
+static int DumpAll(int fd, int outfd, char *buffer, size_t bufsize, size_t len )
+{
+	size_t received = 0;
+	do
+	{
+		int rsize = bufsize;
+		int res;
+
+		if( rsize > len - received ) rsize = len - received;
+		res = recv(fd, buffer, rsize, 0);
+		if( res >= 0)
+		{
+			received += res;
+			write( outfd, buffer, res );
+		}
+		else
+			return res;
+	}
+	while(received < len);
+
+	return received;
+}
+
+
+#define READ_BUFFER_SIZE BUFFER_SIZE
+static char read_buffer[READ_BUFFER_SIZE];
+static struct
+{
+	size_t read_offset, ahead_offset;
+	int fd;
+}	rbstate;
+
+static int RB_Read( char *out, size_t len )
+{
+	// flush alreade read data
+	int availiable = rbstate.ahead_offset - rbstate.read_offset;
+
+	if( availiable > len )
+		availiable = len;
+	memcpy( out, &read_buffer[rbstate.read_offset],  availiable );
+
+	len -= availiable;
+	out += availiable;
+
+	rbstate.read_offset += availiable;
+
+	if( rbstate.ahead_offset == rbstate.read_offset ) // do not need any data in buffer, may reset buffer to beginning
+		rbstate.ahead_offset = rbstate.read_offset = 0;
+
+	if(len == 0)
+		return availiable;
+	else
+	{
+		int rd = ReadAll( rbstate.fd, out, len );
+		if( rd < 0) return rd;
+		return rd + availiable;
+	}
+}
+
+static int RB_Dump( int fd, size_t len )
+{
+	// flush alreade read data
+	int availiable = rbstate.ahead_offset - rbstate.read_offset;
+
+	if( availiable > len )
+		availiable = len;
+
+	write( fd, &read_buffer[rbstate.read_offset],  availiable );
+
+	len -= availiable;
+
+	rbstate.read_offset += availiable;
+
+	if( rbstate.ahead_offset == rbstate.read_offset ) // do not need any data in buffer, may reset buffer to beginning
+		rbstate.ahead_offset = rbstate.read_offset = 0;
+
+	if(len == 0)
+		return availiable;
+	else
+	{
+		int rd = DumpAll( rbstate.fd, fd, &read_buffer[rbstate.ahead_offset], READ_BUFFER_SIZE - rbstate.ahead_offset, len );
+		if( rd < 0) return rd;
+		return rd + availiable;
+	}
+}
+
+static void RB_Skip( size_t len )
+{
+
+}
+static void RB_Init( int fd )
+{
+	rbstate.fd = fd;
+	rbstate.ahead_offset = rbstate.read_offset = 0;
+}
+#define METHOD_LEN 32
+#define URI_LEN 1024
+
+
+int RB_ReadAhead( int force )
+{
+	int res = 1;
+
+	if(rbstate.ahead_offset == rbstate.read_offset || force )
+	{
+		res = read( rbstate.fd, &read_buffer[rbstate.ahead_offset], READ_BUFFER_SIZE - rbstate.ahead_offset - 1 );
+
+		if(res < 0)
+			return res;
+
+		read_buffer[rbstate.ahead_offset += res] = 0;
+	}
+
+	return res;
+}
+
+static int RB_ReadLine( char *out, size_t maxlen )
+{
+	int res = 0;
+	do
+	{
+		char *lineend;
+
+		int res = RB_ReadAhead(res != 0);
+		if(res < 0)
+			return res;
+
+		lineend = strchr( &read_buffer[rbstate.read_offset], '\n' );
+		if( lineend )
+		{
+			int linelen = lineend - &read_buffer[rbstate.read_offset];
+			if(maxlen > linelen) maxlen = linelen;
+			memcpy( out, &read_buffer[rbstate.read_offset], maxlen );
+			rbstate.read_offset += linelen;
+			return maxlen;
+		}
+	} while( res > 0 );
+	return -1;
+}
+
+static int RB_SkipLine( void )
+{
+	int res = 0;
+	do
+	{
+		char *lineend;
+
+		int res = RB_ReadAhead(res != 0);
+		if(res < 0)
+			return res;
+
+		lineend = strchr( &read_buffer[rbstate.read_offset], '\n' );
+		if( lineend )
+		{
+			int linelen = lineend - &read_buffer[rbstate.read_offset];
+			rbstate.read_offset += linelen;
+			return linelen;
+		}
+	} while( res > 0 );
+	return -1;
+}
+
+
+// does not do buffer wrapping, will fail if headers not fit
+static int RB_ReadHeaders( char *method, char *uri, char *headers, size_t hlen )
+{
+	int res;
+	// read first line
+	do
+	{
+		char *lineend;
+		res = RB_ReadAhead(1);
+
+		if(res < 0)
+			return res;
+
+		lineend = strchr( &read_buffer[rbstate.read_offset], '\n' );
+		if( lineend )
+		{
+			if( sscanf(&read_buffer[rbstate.read_offset], "%31s %1023s", method, uri) != 2 )
+			{
+				Error("Bad headers!\n");
+				return -1;
+			}
+			rbstate.read_offset = lineend - &read_buffer[rbstate.read_offset];
+
+			break;
+		}
+	} while( res > 0 );
+
+	res = 0;
+	// read all headers until empty line;
+	do
+	{
+		char *headend;
+		res = RB_ReadAhead(res != 0);
+
+		int he1 = INT_MAX, he2 = INT_MAX;
+
+		if(res < 0)
+			return res;
+
+		headend = strstr(&read_buffer[rbstate.read_offset], "\n\n");
+		if(headend)
+			he1 = headend - &read_buffer[rbstate.read_offset] + 2;
+		headend = strstr(&read_buffer[rbstate.read_offset], "\r\n\r\n");
+		if(headend)
+			he2 = headend - &read_buffer[rbstate.read_offset] + 4;
+
+		if(he2 < he1) he1 = he2;
+		if(he1 != INT_MAX)
+		{
+			if(hlen > he1) hlen = he1;
+			memcpy( headers, &read_buffer[rbstate.read_offset], hlen );
+			rbstate.read_offset += he1;
+			return hlen;
+		}
+	} while( res > 0 );
+
+	return -1;
+}
+
 
 
 void create_directories(const char *path)
@@ -83,7 +322,7 @@ void create_directories(const char *path)
 }
 
 #define MAX_RESP_SIZE 32768
-void serve_file(const char *path, char *buffer, int newsockfd, const char *mime, int binary)
+void serve_file(const char *path, int newsockfd, const char *mime, int binary)
 {
 	char resp_head[512] = "";
 	char resp[MAX_RESP_SIZE] = "";
@@ -123,7 +362,7 @@ void serve_file(const char *path, char *buffer, int newsockfd, const char *mime,
 }
 
 
-void serve_list(const char *path, char *buffer, int fd)
+void serve_list(const char *path, int fd)
 {
 	char resp_dir[MAX_RESP_SIZE];
 	char resp_fil[MAX_RESP_SIZE];
@@ -175,9 +414,9 @@ void serve_list(const char *path, char *buffer, int fd)
 	const char end[] = "{\"name\": \"\", \"type\": -1, \"size\": 0}]";
 	writeall(fd, end, sizeof(end) - 1);
 }
-void serve_path_dav(const char *path, char *buffer, int fd);
+void serve_path_dav(const char *path, int fd);
 
-void serve_list_dav(const char *path, char *buffer, int fd)
+void serve_list_dav(const char *path, int fd)
 {
 	char resp[MAX_RESP_SIZE];
 	char fpath[PATH_MAX] = {};
@@ -238,7 +477,7 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 		{
 			if(!dirflag)
 			{
-				serve_path_dav(path, buffer, fd);
+				serve_path_dav(path, fd);
 				return;
 			}
 			break;
@@ -303,7 +542,7 @@ void serve_list_dav(const char *path, char *buffer, int fd)
 	writeall(fd, end, sizeof(end) - 1);
 }
 
-void serve_path_dav(const char *path, char *buffer, int fd)
+void serve_path_dav(const char *path, int fd)
 {
 	char resp_dir[MAX_RESP_SIZE];
 	int len_dir = 0;
@@ -429,39 +668,40 @@ int main() {
 			close(newsockfd);
 			continue;
 		}
-		int he = -1;
+		//int he = -1;
 
 		// Read from the socket
-		int valread = readheaders(newsockfd, buffer, BUFFER_SIZE - 1, &he);
+		/*int valread = readheaders(newsockfd, buffer, BUFFER_SIZE - 1, &he);
 		if (valread < 0) {
 			perror("webserver (read)");
 			close(newsockfd);
 			continue;
+		}*/
+		// Read the request
+		char method[METHOD_LEN] = "", uri[URI_LEN] = "";
+		RB_Init(newsockfd);
+		if(RB_ReadHeaders(method, uri, buffer, sizeof(buffer) - 1) < 0)
+		{
+			close(newsockfd);
+			continue;
 		}
 
-		// Read the request
-		char method[32] = "", uri[256] = "", version[32] = "";
+
+
 		const char *contentlength = strcasestr(buffer, "content-length: ");
 		int clen = 0;
 		if(contentlength)
 		{
 			clen = atoi(contentlength + sizeof("content-length: ") - 1);
 		}
-		if( sscanf(buffer, "%31s %255s %31s", method, uri, version) != 3 )
-		{
-			printf("Bad headers!\n");
-			close(newsockfd);
-			continue;
-		}
 
-		printf("[%s:%u] %s %s %s\n", inet_ntoa(client_addr.sin_addr),
-			   ntohs(client_addr.sin_port), method, version, uri);
+		printf("[%s:%u] %s %s\n", inet_ntoa(client_addr.sin_addr),
+			   ntohs(client_addr.sin_port), method, uri);
 
 
 		if(!strcmp(method,"PUT"))
 		{
 			int r = fork();
-			size_t filelen = 0;
 			if(r == 0) // child, copy the file
 			{
 				//handleupload(newsockfd, buffer, uri);
@@ -474,29 +714,10 @@ int main() {
 				while(path[0] == '/')path++;
 				create_directories(path);
 				fd = open(path, O_CREAT | O_WRONLY, 0666);
-				write(fd, buffer + he, valread - he);
-				filelen = valread - he;
-				//printf("transfer0 %d\n",(int)valread);
-				while( filelen < clen )
-				{
-					int readlen = clen - filelen;
-					if( readlen > BUFFER_SIZE )
-						readlen = BUFFER_SIZE;
-					valread = read( newsockfd, buffer, readlen );
-					if(valread > 0)
-					{
-						filelen += valread;
-						//printf("transfer %d\n",(int)valread);
-						write(fd, buffer, valread);
-					}
-					else
-					{
-//						printf("end %d\n", errno);
-						break;
-					}
-				}
+				int ret = RB_Dump( fd, clen );
 				printf("done %s\n", path);
-				ftruncate(fd,filelen);
+				if(ret > 0);
+					ftruncate(fd,ret);
 				close(fd);
 				const char resp_ok_beg[] = "HTTP/1.1 201 Created\r\n"
 								   "Server: webserver-c\r\n"
@@ -504,7 +725,7 @@ int main() {
 				const char resp_ok_end[] = "\r\nContent-type: text/html\r\n\r\n"
 								   "OK";
 
-				if( valread >= 0)
+				if( ret >= 0)
 				{
 					writeall(newsockfd, resp_ok_beg, sizeof(resp_ok_beg) - 1);
 					writeall(newsockfd, path, strlen(path));
@@ -555,16 +776,16 @@ int main() {
 			if(!strncmp(path, "/list/", 6))
 			{
 				path += 6;
-				serve_list(path, buffer, newsockfd);
+				serve_list(path, newsockfd);
 			}
 			else if(strncmp(path, "/files/", 7))
 			{
-				serve_file("folderupload.html", buffer, newsockfd, "text/html", 1);
+				serve_file("folderupload.html", newsockfd, "text/html", 1);
 			}
 			else
 			{
 				path += 7;
-				serve_file(path, buffer, newsockfd, "application/octet-stream", 1);
+				serve_file(path, newsockfd, "application/octet-stream", 1);
 			}
 
 			close(newsockfd);
@@ -580,23 +801,10 @@ int main() {
 			"Server: webserver-c\r\n"
 			"Content-Length:0\r\n"
 			"\r\n";
-			int filelen = valread - he;
+
 			//usleep(15000);
 
-			while( filelen < clen )
-			{
-				int readlen = clen - filelen;
-				if( readlen > BUFFER_SIZE )
-					readlen = BUFFER_SIZE;
-				valread = read( newsockfd, buffer, readlen );
-				if(valread > 0)
-				{
-					filelen += valread;
-					//printf("transfer %d\n",(int)valread);
-					write(1, buffer, valread);
-				}
-				else break;
-			}
+			RB_Dump( 1, clen );
 			
 			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
 			{
@@ -645,21 +853,7 @@ int main() {
 			mkdir(path, 0777);
 			//usleep(10000);
 
-			int filelen = valread - he;
-			while( filelen < clen )
-			{
-				int readlen = clen - filelen;
-				if( readlen > BUFFER_SIZE )
-					readlen = BUFFER_SIZE;
-				valread = read( newsockfd, buffer, readlen );
-				if(valread > 0)
-				{
-					filelen += valread;
-					//printf("transfer %d\n",(int)valread);
-					write(1, buffer, valread);
-				}
-				else break;
-			}
+			RB_Dump(1, clen);
 			//if( valread >= 0)
 				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
 			close(newsockfd);
@@ -678,21 +872,7 @@ int main() {
 				continue;
 			}
 			printf("%s\n", buffer);
-			int filelen = valread - he;
-			while( filelen < clen )
-			{
-				int readlen = clen - filelen;
-				if( readlen > BUFFER_SIZE )
-					readlen = BUFFER_SIZE;
-				valread = read( newsockfd, buffer, readlen );
-				if(valread > 0)
-				{
-					filelen += valread;
-					//printf("transfer %d\n",(int)valread);
-					write(1, buffer, valread);
-				}
-				else break;
-			}
+			RB_Dump(1, clen);
 
 			//if( valread >= 0)
 				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
@@ -715,6 +895,7 @@ int main() {
 			}
 			path += 7;
 
+			RB_Dump(1, clen);
 			dest = strcasestr(buffer, "destination: ");
 			if(dest)
 			{
@@ -732,7 +913,7 @@ int main() {
 				}
 			}
 
-			if( valread >= 0)
+			//if( valread >= 0)
 				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
 			close(newsockfd);
 		}
@@ -742,22 +923,7 @@ int main() {
 			const char resp_auth[] = "HTTP/1.1 401 Unauthorized\r\n"
 								   "Server: webserver-c\r\n"
 								   "WWW-Authenticate: Basic realm=\"User Visible Realm\"\r\n\r\n";
-			int filelen = valread - he;
-			//printf("transfer0 %d\n",(int)valread);
-			while( filelen < clen )
-			{
-				int readlen = clen - filelen;
-				if( readlen > BUFFER_SIZE )
-					readlen = BUFFER_SIZE;
-				valread = read( newsockfd, buffer, readlen );
-				if(valread > 0)
-				{
-					filelen += valread;
-					//printf("transfer %d\n",(int)valread);
-					write(1, buffer, valread);
-				}
-				else break;
-			}
+			RB_Dump(1, clen);
 			/*if(!strcasestr(buffer, "authorization: "))
 			{
 				writeall(newsockfd, resp_auth, sizeof(resp_auth) - 1);
@@ -765,7 +931,7 @@ int main() {
 			}*/
 			if(strncmp(path, "/files", 6) || strstr(path, ".."))
 			{
-				serve_path_dav("", buffer, newsockfd);
+				serve_path_dav("", newsockfd);
 				close(newsockfd);
 				continue;
 			}
@@ -773,11 +939,11 @@ int main() {
 			printf("%s\n", buffer);
 			if(strcasestr( buffer, "Depth: 0" ))
 			{
-				serve_path_dav(path, buffer, newsockfd);
+				serve_path_dav(path, newsockfd);
 			}
 			else
 			{
-				serve_list_dav(path, buffer, newsockfd);
+				serve_list_dav(path, newsockfd);
 			}
 
 			close(newsockfd);
@@ -790,7 +956,8 @@ int main() {
 			"Access-Control-Allow-Methods: PROPFIND, PROPPATCH, COPY, MOVE, DELETE, MKCOL, PUT, UNLOCK, GETLIB, VERSION-CONTROL, CHECKIN, CHECKOUT, UNCHECKOUT, REPORT, UPDATE, CANCELUPLOAD, HEAD, OPTIONS, GET, POST\r\n"
 			"Access-Control-Allow-Headers: Overwrite, Destination, Content-Type, Depth, User-Agent, X-File-Size, X-Requested-With, If-Modified-Since, X-File-Name, Cache-Control\r\n"
 			"Access-Control-Max-Age: 86400\r\n\r\n";*/
-			if( valread >= 0)
+			//if( valread >= 0)
+			RB_Dump(1, clen);
 				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
 			close(newsockfd);
 		}
@@ -807,22 +974,7 @@ int main() {
 			//lock_token[1] += count++ % 10;
 #endif
 			//usleep(5000);
-			int filelen = valread - he;
-			//printf("transfer0 %d\n",(int)valread);
-			while( filelen < clen )
-			{
-				int readlen = clen - filelen;
-				if( readlen > BUFFER_SIZE )
-					readlen = BUFFER_SIZE;
-				valread = read( newsockfd, buffer, readlen );
-				if(valread > 0)
-				{
-					filelen += valread;
-					//printf("transfer %d\n",(int)valread);
-					write(1, buffer, valread);
-				}
-				else break;
-			}
+			RB_Dump(1, clen);
 			
 
 			snprintf(resp_lock, 1023, "HTTP/1.1 200 OK\r\n"
