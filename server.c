@@ -324,11 +324,34 @@ static void PB_Init( printbuffer_t *pb, char *buf, size_t buflen )
 	pb->pos = 0;
 	pb->buf[pb->sz] = 0;
 }
+#if ( __GNUC__ >= 3 )
+#define unlikely(x) __builtin_expect(x, 0)
+#define likely(x)   __builtin_expect(x, 1)
+#endif
+
+// Q_strncpy is the same as strlcpy
+static inline size_t Q_strncpy( char *dst, const char *src, size_t siz )
+{
+	size_t len;
+
+	if( unlikely( !dst || !src || !siz ))
+		return 0;
+
+	len = strlen( src );
+	if( len + 1 > siz ) // check if truncate
+	{
+		memcpy( dst, src, siz - 1 );
+		dst[siz - 1] = 0;
+	}
+	else memcpy( dst, src, len + 1 );
+
+	return len; // count does not include NULL
+}
 
 static void PB_WriteString( printbuffer_t *pb, const char *str )
 {
-	const char *end = strncpy( pb->buf + pb->pos, str, pb->sz - pb->pos );
-	pb->pos += end - (pb->buf + pb->pos);
+	int len = Q_strncpy( pb->buf + pb->pos, str, pb->sz - pb->pos );
+	pb->pos += len;
 	if( pb->pos > pb->sz )
 	{
 		pb->pos = pb->sz;
@@ -1010,7 +1033,9 @@ int main() {
 		}
 		else if(!strcmp(method, "LOCK"))
 		{
-			char resp_lock[1024] = "";
+			char lock_headers[512];
+			char lock_body[1024];
+			printbuffer_t lb, lh;
 			static int count;
 #if 0
 			char lock_token [] = "opaquelocktoken:7028f329-f1cf-4123-a34c-dba594689257";
@@ -1022,32 +1047,27 @@ int main() {
 #endif
 			//usleep(5000);
 			RB_Dump(1, clen);
-			
 
-			snprintf(resp_lock, 1023, "HTTP/1.1 200 OK\r\n"
-			"Content-Type: application/xml; charset=utf-8\r\n"
-			"Lock-Token: <%s>\r\n"
-			"Content-Length: %d\r\n" // mandatory on windows
-			"Date: Fri, 10 Nov 2023 23:45:40 GMT\r\n\r\n"
+			PB_Init( &lb, lock_body, 1024 );
+			PB_Init( &lh, lock_headers, 512 );
+			PB_PrintString( &lb, 
 			"<?xml version=\"1.0\" encoding=\"utf-8\"?>"
 			"<D:prop xmlns:D=\"DAV:\"><D:lockdiscovery><D:activelock>"
 			"<D:locktoken><D:href>%s</D:href></D:locktoken>"
 			"<D:lockroot><D:href>%s</D:href></D:lockroot>"
-			"</D:activelock></D:lockdiscovery></D:prop>", lock_token, 220 + strlen(lock_token)+strlen(uri), lock_token, uri );
-			printf("clen %d\n", (int)strlen(strstr(resp_lock, "\r\n\r\n")+4));
-			/*= "HTTP/1.1 405 Method not allowed\r\n"
-								   "Content-Type: application/xml\r\n"
-								   //"Content-Length: 0\r\n";
-								   "\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:prop xmlns:D=\"DAV:\"> <D:lockdiscovery><D:activelock> <D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>Infinity</D:depth>"
-									"<D:owner></D:owner><D:timeout>Second-604800</D:timeout><D:locktoken><D:href>opaquelocktoken:e71d4fae-5dec-22d6-fea5-00a0c91e6be4</D:href></D:locktoken></D:activelock></D:lockdiscovery></D:prop>";*/
-			//if( valread >= 0)
-			writeall(newsockfd, resp_lock, strlen(resp_lock));
-			write(1, resp_lock, strlen(resp_lock));
+			"</D:activelock></D:lockdiscovery></D:prop>", lock_token, uri );
+			PB_PrintString( &lh, "HTTP/1.1 200 OK\r\n"
+			"Content-Type: application/xml; charset=utf-8\r\n"
+			"Lock-Token: <%s>\r\n"
+			"Content-Length: %d\r\n"
+			"Date: Fri, 10 Nov 2023 23:45:40 GMT\r\n\r\n", lock_token, lb.pos );
+			writeall(newsockfd, lock_headers, lh.pos);
+			writeall(newsockfd, lock_body, lb.pos);
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "UNLOCK"))
 		{
-			writeall(newsockfd, resp_ok, strlen(resp_ok));
+//			writeall(newsockfd, resp_ok, strlen(resp_ok));
 			WriteStringLit(newsockfd, "HTTP/1.1 200 OK\r\n"
 									  "Server: webserver-c\r\n"
 									  "Content-type: application/xml\r\n\r\n");
