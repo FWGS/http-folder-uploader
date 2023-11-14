@@ -12,6 +12,8 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <stdarg.h>
+#include <time.h>
 #define PORT 8080
 #define BUFFER_SIZE 1024*16
 #define Error(...) fprintf(stderr, __VA_ARGS__)
@@ -66,6 +68,9 @@ static int readheaders(int fd, char *buf, size_t len, int *headerend)
 
 	return -1;
 }
+
+#define WriteStringLit( fd, lit ) writeall( fd, lit, sizeof( lit ));
+
 static int ReadAll(int fd, char *data, size_t len)
 {
 	size_t received = 0;
@@ -296,6 +301,7 @@ static int RB_ReadHeaders( char *method, char *uri, char *headers, size_t hlen )
 		{
 			if(hlen > he1) hlen = he1;
 			memcpy( headers, &read_buffer[rbstate.read_offset], hlen );
+			headers[hlen] = 0;
 			rbstate.read_offset += he1;
 			return hlen;
 		}
@@ -304,7 +310,62 @@ static int RB_ReadHeaders( char *method, char *uri, char *headers, size_t hlen )
 	return -1;
 }
 
+typedef struct printbuffer_s
+{
+	char *buf;
+	size_t pos;
+	size_t sz;
+} printbuffer_t;
 
+static void PB_Init( printbuffer_t *pb, char *buf, size_t buflen )
+{
+	pb->buf = buf;
+	pb->sz = buflen - 1; // always null-terminate
+	pb->pos = 0;
+	pb->buf[pb->sz] = 0;
+}
+
+static void PB_WriteString( printbuffer_t *pb, const char *str )
+{
+	const char *end = strncpy( pb->buf + pb->pos, str, pb->sz - pb->pos );
+	pb->pos += end - (pb->buf + pb->pos);
+	if( pb->pos > pb->sz )
+	{
+		pb->pos = pb->sz;
+		Error("PB: String buffer overflow!\n");
+	}
+}
+
+static void PB_WriteStringLen( printbuffer_t *pb, const char *str, size_t len )
+{
+	if( len > pb->sz - pb->pos )
+		len = pb->sz - pb->pos;
+
+	memcpy( pb->buf + pb->pos, str, len );
+	pb->pos += len;
+}
+
+#define PB_WriteStringLit(p, x) PB_WriteStringLen(p, x, sizeof( x ) - 1)
+
+static void PB_PrintString( printbuffer_t *pb, const char *fmt, ... )
+{
+	int res;
+	va_list args;
+
+	va_start( args, fmt );
+	res = vsnprintf( pb->buf + pb->pos, pb->sz - pb->pos, fmt, args );
+	va_end( args );
+	if( res > 0 )
+		pb->pos += res;
+
+	if( pb->pos > pb->sz )
+	{
+		pb->pos = pb->sz;
+		Error("PB: String buffer overflow!\n");
+	}
+}
+
+#define PB_DeclareString( name, size, lit ) char name ## _buffer[size] = lit; printbuffer_t name = { name ## _buffer, sizeof(lit) - 1, size }
 
 void create_directories(const char *path)
 {
@@ -705,6 +766,9 @@ int main() {
 			if(r == 0) // child, copy the file
 			{
 				//handleupload(newsockfd, buffer, uri);
+				PB_DeclareString(resp_ok, 1024,"HTTP/1.1 201 Created\r\n"
+												"Server: webserver-c\r\n"
+												"Location: /files/");
 				int fd;
 				char *path = uri;
 				if(strncmp(path, "/files/", 7) || strstr(path, ".."))
@@ -719,17 +783,13 @@ int main() {
 				if(ret > 0);
 					ftruncate(fd,ret);
 				close(fd);
-				const char resp_ok_beg[] = "HTTP/1.1 201 Created\r\n"
-								   "Server: webserver-c\r\n"
-								   "Location: /files/";
-				const char resp_ok_end[] = "\r\nContent-type: text/html\r\n\r\n"
-								   "OK";
 
 				if( ret >= 0)
 				{
-					writeall(newsockfd, resp_ok_beg, sizeof(resp_ok_beg) - 1);
-					writeall(newsockfd, path, strlen(path));
-					writeall(newsockfd, resp_ok_end, sizeof(resp_ok_end) - 1);
+					PB_WriteString( &resp_ok, path );
+					PB_WriteStringLit(&resp_ok, "\r\nContent-type: text/html\r\n\r\n"
+									  "OK");
+					writeall( newsockfd, resp_ok_buffer, resp_ok.pos );
 				}
 				close(newsockfd);
 				_exit(0);
@@ -757,11 +817,10 @@ int main() {
 			{
 				path += 7;
 				unlink(path);
-				const char resp_ok[] = "HTTP/1.1 200 OK\r\n"
+				WriteStringLit(newsockfd, "HTTP/1.1 200 OK\r\n"
 									   "Server: webserver-c\r\n"
 									   "Content-type: text/html\r\n\r\n"
-									   "OK";
-				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+							   "OK");
 			}
 			close(newsockfd);
 		}
@@ -793,14 +852,6 @@ int main() {
 		else if(!strcmp(method, "HEAD"))
 		{
 			char *path = uri;
-				const char resp_ok[] = "HTTP/1.1 200 OK\r\n"
-									   "Server: webserver-c\r\n"
-									   "Content-type: text/plain\r\n"
-									   "\r\n";//"Content-Length: ";
-			const char resp_nf[] = "HTTP/1.1 404 Not found\r\n"
-			"Server: webserver-c\r\n"
-			"Content-Length:0\r\n"
-			"\r\n";
 
 			//usleep(15000);
 
@@ -816,33 +867,33 @@ int main() {
 				if(!stat(path,&sb))
 				{
 					const char *fname = strrchr(path, '/');
+					printbuffer_t resp;
 					if(!fname) fname = path;
 					else fname++;
-					
-					int resp_len = snprintf(buffer, 511,
-							"HTTP/1.1 200 OK\r\n"
-							"Server: webserver-c\r\n"
-							"etag: %d-%d\r\n"
-							"Content-Type: %s\r\n"
-							"Content-Length: %d\r\n"
-							"Accept-Ranges: bytes\r\n"
-							"Date: Sat, 11 Nov 2023 21:55:54 GMT\r\n"
-							"Content-Disposition : inline; filename=\"%s\"\r\n\r\n", (int)time(0), (int)sb.st_size, "text/plain", (int)sb.st_size, fname );
-					writeall(newsockfd, buffer, resp_len);
+
+					PB_Init( &resp, buffer, sizeof( buffer ) - 1);
+					PB_PrintString( &resp,
+								   "HTTP/1.1 200 OK\r\n"
+								   "Server: webserver-c\r\n"
+								   "etag: %d-%d\r\n"
+								   "Content-Type: %s\r\n"
+								   "Content-Length: %d\r\n"
+								   "Accept-Ranges: bytes\r\n"
+								   "Date: Sat, 11 Nov 2023 21:55:54 GMT\r\n"
+								   "Content-Disposition : inline; filename=\"%s\"\r\n\r\n", (int)time(0), (int)sb.st_size, "text/plain", (int)sb.st_size, fname );
+					writeall( newsockfd, buffer, resp.pos );
 					printf("HEAD %s %s %d\n", path, fname, (int)sb.st_size);
 				}
 				else
-					writeall(newsockfd, resp_nf, sizeof(resp_nf) - 1);
+					WriteStringLit(newsockfd, "HTTP/1.1 404 Not found\r\n"
+											  "Server: webserver-c\r\n"
+											  "Content-Length:0\r\n"
+											  "\r\n");
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "MKCOL"))
 		{
 			char *path = uri;
-			const char resp_ok[] = "HTTP/1.1 201 Created\r\n"
-								   "Server: webserver-c\r\n\r\n"
-								   //"Access-Control-Allow-Origin: *\r\n"
-								   //"Content-type: text/html\r\n\r\n"
-								   "";
 			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
 			{
 				close(newsockfd);
@@ -851,21 +902,21 @@ int main() {
 			path += 7;
 			create_directories(path);
 			mkdir(path, 0777);
+			puts(buffer);
 			//usleep(10000);
 
 			RB_Dump(1, clen);
-			//if( valread >= 0)
-				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+			WriteStringLit(newsockfd,"HTTP/1.1 201 Created\r\n"
+									  "Server: webserver-c\r\n\r\n" )
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "PROPPATCH"))
 		{
 			char *path = uri;
-			const char resp_ok[] = "HTTP/1.1 207 Multi-Status\r\n"
-								   "Server: webserver-c\r\n"
-								   "Content-type: application/xml\r\n\r\n"
-								   "<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>";
-			const char resp_end[] = "</D:href><D:propstat><D:prop></D:prop><D:status>HTTP/1.1 403 Forbidden</D:status></D:propstat></D:response></D:multistatus>";
+			PB_DeclareString( resp_ok, 1024,  "HTTP/1.1 207 Multi-Status\r\n"
+											"Server: webserver-c\r\n"
+											"Content-type: application/xml\r\n\r\n"
+											"<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\"><D:response><D:href>" );
 			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
 			{
 				close(newsockfd);
@@ -873,20 +924,15 @@ int main() {
 			}
 			printf("%s\n", buffer);
 			RB_Dump(1, clen);
+			PB_WriteString( &resp_ok, uri );
+			PB_WriteStringLit( &resp_ok, "</D:href><D:propstat><D:prop></D:prop><D:status>HTTP/1.1 403 Forbidden</D:status></D:propstat></D:response></D:multistatus>");
+			writeall(newsockfd, resp_ok_buffer, resp_ok.pos );
 
-			//if( valread >= 0)
-				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
-				writeall(newsockfd, uri, strlen(uri));
-				writeall(newsockfd, resp_end, sizeof(resp_end) - 1);
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "MOVE"))
 		{
 			char *path = uri;
-			const char resp_ok[] = "HTTP/1.1 201 Created\r\n"
-								   "Server: webserver-c\r\n"
-								   "Content-type: text/html\r\n\r\n"
-								   "OK";
 			const char *dest;
 			if(strncmp(path, "/files/", 7) || strstr(path, ".."))
 			{
@@ -913,8 +959,10 @@ int main() {
 				}
 			}
 
-			//if( valread >= 0)
-				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+			WriteStringLit(newsockfd,  "HTTP/1.1 201 Created\r\n"
+										  "Server: webserver-c\r\n"
+										  "Content-type: text/html\r\n\r\n"
+										  "OK");
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "PROPFIND"))
@@ -950,7 +998,6 @@ int main() {
 		}
 		else if(!strcmp(method, "OPTIONS"))
 		{
-			const char resp_ok[] = "HTTP/1.1 200 OK\r\nAllow: GET,HEAD,PUT,OPTIONS,DELETE,PROPFIND,COPY,MOVE\r\nDAV: 1,2\r\nContent-Length: 0\r\n\r\n";
 			/*"HTTP/1.1 200 OK\r\n"
 			"Content-Type: text/plain\r\n"
 			"Access-Control-Allow-Methods: PROPFIND, PROPPATCH, COPY, MOVE, DELETE, MKCOL, PUT, UNLOCK, GETLIB, VERSION-CONTROL, CHECKIN, CHECKOUT, UNCHECKOUT, REPORT, UPDATE, CANCELUPLOAD, HEAD, OPTIONS, GET, POST\r\n"
@@ -958,7 +1005,7 @@ int main() {
 			"Access-Control-Max-Age: 86400\r\n\r\n";*/
 			//if( valread >= 0)
 			RB_Dump(1, clen);
-				writeall(newsockfd, resp_ok, sizeof(resp_ok) - 1);
+			WriteStringLit(newsockfd, "HTTP/1.1 200 OK\r\nAllow: GET,HEAD,PUT,OPTIONS,DELETE,PROPFIND,COPY,MOVE\r\nDAV: 1,2\r\nContent-Length: 0\r\n\r\n");
 			close(newsockfd);
 		}
 		else if(!strcmp(method, "LOCK"))
@@ -1000,11 +1047,10 @@ int main() {
 		}
 		else if(!strcmp(method, "UNLOCK"))
 		{
-			const char resp_ok[] = "HTTP/1.1 200 OK\r\n"
-								   "Server: webserver-c\r\n"
-								   "Content-type: application/xml\r\n\r\n"
-								   "";
 			writeall(newsockfd, resp_ok, strlen(resp_ok));
+			WriteStringLit(newsockfd, "HTTP/1.1 200 OK\r\n"
+									  "Server: webserver-c\r\n"
+									  "Content-type: application/xml\r\n\r\n");
 			close(newsockfd);
 		
 		}
