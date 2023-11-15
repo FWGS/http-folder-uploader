@@ -969,7 +969,8 @@ int main() {
 					sscanf( rng, "%d-%d", &start, &end );
 					serve_file_range(path, newsockfd, "application/octet-stream", start, end );
 				}
-				serve_file(path, newsockfd, "application/octet-stream", 1);
+				else
+					serve_file(path, newsockfd, "application/octet-stream", 1);
 			}
 
 			close(newsockfd);
