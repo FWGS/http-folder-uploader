@@ -69,7 +69,7 @@ static int readheaders(int fd, char *buf, size_t len, int *headerend)
 	return -1;
 }
 
-#define WriteStringLit( fd, lit ) writeall( fd, lit, sizeof( lit ));
+#define WriteStringLit( fd, lit ) writeall( fd, lit, sizeof( lit ) - 1);
 
 static int ReadAll(int fd, char *data, size_t len)
 {
@@ -450,20 +450,20 @@ void serve_list(const char *path, int fd)
 {
 	char resp_dir[MAX_RESP_SIZE];
 	char resp_fil[MAX_RESP_SIZE];
+	printbuffer_t rd = {resp_dir, 0, sizeof(resp_dir) - 1}, rf = {resp_fil, 0, sizeof(resp_fil) - 1};
 	char fpath[PATH_MAX] = {};
-	int len_dir = 0, len_fil = 0;
 	int plen = strlen(path);
+	DIR *dirp;
+
 	if(!plen)
 	{
 		path = ".";
 		plen = 1;
 	}
-	const char resp_list[] =
-		"HTTP/1.1 200 OK\r\n"
+
+	WriteStringLit(fd, "HTTP/1.1 200 OK\r\n"
 		"Server: webserver-c\r\n"
-		"Content-Type: text/plain\r\n\r\n[\n";
-	DIR *dirp;
-	writeall(fd, resp_list, sizeof(resp_list) - 1);
+		"Content-Type: text/plain\r\n\r\n[\n");
 	printf("list %s\n", path);
 	dirp = opendir(path);
 	if (!dirp)
@@ -487,16 +487,14 @@ void serve_list(const char *path, int fd)
 		if (stat(fpath, &sb) != 0)
 			continue;
 		printf("dir %s\n", dp->d_name);
-		if(S_ISDIR(sb.st_mode))
-			len_dir += snprintf(&resp_dir[0] + len_dir, MAX_RESP_SIZE - len_dir, "{\"name\": \"%s\", \"type\": 0, \"size\": %d},\n", dp->d_name, (int)sb.st_size);
-		else
-			len_fil += snprintf(&resp_fil[0] + len_fil, MAX_RESP_SIZE - len_fil, "{\"name\": \"%s\", \"type\": 1, \"size\": %d},\n", dp->d_name, (int)sb.st_size);
+
+		PB_PrintString(S_ISDIR(sb.st_mode)?&rd:&rf,"{\"name\": \"%s\", \"type\": %d, \"size\": %d},\n", dp->d_name, !S_ISDIR(sb.st_mode), (int)sb.st_size);
 	}
+
 	closedir(dirp);
-	writeall(fd, resp_dir, len_dir);
-	writeall(fd, resp_fil, len_fil);
-	const char end[] = "{\"name\": \"\", \"type\": -1, \"size\": 0}]";
-	writeall(fd, end, sizeof(end) - 1);
+	writeall(fd, resp_dir, rd.pos);
+	writeall(fd, resp_fil, rf.pos);
+	WriteStringLit(fd, "{\"name\": \"\", \"type\": -1, \"size\": 0}]");
 }
 void serve_path_dav(const char *path, int fd);
 
@@ -633,6 +631,9 @@ void serve_path_dav(const char *path, int fd)
 	const char *path2 = path;
 	int plen = strlen(path);
 	struct stat sb;
+	PB_DeclareString( resp, MAX_RESP_SIZE, "HTTP/1.1 207 Multi-Status\r\n"
+		"Server: webserver-c\r\n"
+		"Content-Type: application/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">");
 
 	if(!plen)
 	{
@@ -652,28 +653,15 @@ void serve_path_dav(const char *path, int fd)
 	}*/
 	if(s) // || (!S_ISDIR(sb.st_mode) && sb.st_size == 0))
 	{
-		const char resp_list1[] =
-			//"HTTP/1.1 207 OK\r\n"
-			"HTTP/1.1 404 Not found\r\n"
+		WriteStringLit( fd, "HTTP/1.1 404 Not found\r\n"
 			"Server: webserver-c\r\n"
-			"Content-Type: application/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\" />";
-		writeall(fd, resp_list1, sizeof(resp_list1) - 1);
-		write(1, resp_list1, sizeof(resp_list1) - 1);
+			"Content-Type: application/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\" />");
 		printf("bad stat %s %d %d %d\n", path, s, errno, sb.st_mode);
 		return;
 
 	}
-	const char resp_list[] =
-		"HTTP/1.1 207 Multi-Status\r\n"
-		"Server: webserver-c\r\n"
-		//"Content-Length: 573\r\n"
-		"Content-Type: application/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">";
-	
-	writeall(fd, resp_list, sizeof(resp_list) - 1);
 
-
-	len_dir += snprintf(
-		&resp_dir[0] + len_dir, MAX_RESP_SIZE - len_dir,
+	PB_PrintString( &resp,
 		"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 		"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
 		"<D:getcontentlength>%d</D:getcontentlength>"
@@ -683,9 +671,9 @@ void serve_path_dav(const char *path, int fd)
 		"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>",
 		path, (!S_ISDIR(sb.st_mode))?(int)sb.st_size:0,
 		 S_ISDIR(sb.st_mode)?"<D:resourcetype><D:collection/></D:resourcetype>":"<D:resourcetype /><d:getcontenttype>text/plain</d:getcontenttype>");
-	printf("clen %d\n", (int)(strlen("<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">") + len_dir));
-	write(1, resp_dir, len_dir);
-	writeall(fd, resp_dir, len_dir);
+	//printf("clen %d\n", (int)(strlen("<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">") + len_dir));
+	//write(1, resp_dir, len_dir);
+	writeall( fd, resp_buffer, resp.pos );
 }
 
 
@@ -707,12 +695,6 @@ int main() {
 	int host_addrlen = sizeof(host_addr);
 
 	host_addr.sin_family = AF_INET;
-	/*
-	int fd = open("output", O_CREAT | O_WRONLY, 0744);
-	write(fd, buffer + he, valread - he);
-	while((valread = read( newsockfd, buffer, BUFFER_SIZE )) >= 0)
-		write(fd, buffer, valread);
-	close(fd);*/
 	host_addr.sin_port = htons(PORT);
 	host_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
@@ -752,25 +734,15 @@ int main() {
 			close(newsockfd);
 			continue;
 		}
-		//int he = -1;
 
-		// Read from the socket
-		/*int valread = readheaders(newsockfd, buffer, BUFFER_SIZE - 1, &he);
-		if (valread < 0) {
-			perror("webserver (read)");
-			close(newsockfd);
-			continue;
-		}*/
 		// Read the request
 		char method[METHOD_LEN] = "", uri[URI_LEN] = "";
 		RB_Init(newsockfd);
-		if(RB_ReadHeaders(method, uri, buffer, sizeof(buffer) - 1) < 0)
+		if( RB_ReadHeaders( method, uri, buffer, sizeof( buffer ) - 1) < 0 )
 		{
-			close(newsockfd);
+			close( newsockfd );
 			continue;
 		}
-
-
 
 		const char *contentlength = strcasestr(buffer, "content-length: ");
 		int clen = 0;
@@ -1041,8 +1013,8 @@ int main() {
 			char lock_token [] = "opaquelocktoken:7028f329-f1cf-4123-a34c-dba594689257";
 			lock_token[17] += count++ % 10;
 #else
-			char lock_token [] = "1699659945";
-			sprintf(lock_token,"%d", (int)time(0));//(int)count++);//time(0));
+			char lock_token [32] = "";
+			snprintf(lock_token, 31, "%d", (int)time(0));//(int)count++);//time(0));
 			//lock_token[1] += count++ % 10;
 #endif
 			//usleep(5000);
