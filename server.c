@@ -547,6 +547,64 @@ void serve_list(const char *path, int fd)
 	writeall(fd, rf_buffer, rf.pos);
 	WriteStringLit(fd, "{\"name\": \"\", \"type\": -1, \"size\": 0}]");
 }
+
+void serve_index(const char *path, int fd)
+{
+	PB_Declare( rd, MAX_RESP_SIZE );
+	PB_Declare( rf, MAX_RESP_SIZE );
+	char fpath[PATH_MAX] = {};
+	int plen = strlen(path);
+	DIR *dirp;
+
+	if(!plen)
+	{
+		path = ".";
+		plen = 1;
+	}
+
+	WriteStringLit(fd, "HTTP/1.1 200 OK\r\n"
+					   "Server: webserver-c\r\n"
+					   "Content-Type: text/html\r\n\r\n<html>"
+					   "<body bgcolor=\"#606060\" text=\"#E0E0E0\" link=\"#F0F0D0\">"
+					   "<table border=\"1\" width=\"100%\"><tr>"
+					   "<td width=\"100%\">/files/");
+	printf("list %s\n", path);
+	dirp = opendir(path);
+	if (!dirp)
+		return;
+	if( plen > PATH_MAX - 2)
+		plen = PATH_MAX - 2;
+	writeall(fd, path, plen);
+	WriteStringLit(fd,"</td><td><a href=\"/index/\">/</a></td></tr>");
+	strncpy(fpath, path, plen);
+	fpath[plen++] = '/';
+
+	while (1) {
+		struct dirent *dp;
+		struct stat sb;
+
+		dp = readdir(dirp);
+		if (!dp)
+			break;
+		if (dp->d_name[0] == '.')// && !dp->d_name[1])
+			continue;
+		strncpy(&fpath[plen], dp->d_name, PATH_MAX - plen - 1);
+		if (stat(fpath, &sb) != 0)
+			continue;
+		printf("dir %s\n", dp->d_name);
+
+		if( S_ISDIR( sb.st_mode ))
+			PB_PrintString( &rd, "<tr><td width=\"100%\"><a href=\"/index/%s\">%s</a></td><td>(dir)</td></tr>", fpath, dp->d_name );
+		else
+			PB_PrintString( &rf, "<tr><td width=\"100%\"><a href=\"/files/%s\" target=\"_blank\">%s</a></td><td>%d</td></tr>", fpath, dp->d_name, (int)sb.st_size );
+	}
+
+	closedir(dirp);
+	writeall(fd, rd_buffer, rd.pos);
+	writeall(fd, rf_buffer, rf.pos);
+	WriteStringLit(fd, "</table></body></html>");
+}
+
 void serve_path_dav(const char *path, int fd);
 
 void serve_list_dav(const char *path, int fd)
@@ -952,6 +1010,18 @@ int main() {
 			{
 				path += 6;
 				serve_list(path, newsockfd);
+			}
+			else if(!strcmp(path, "/indexredir"))
+			{
+				WriteStringLit(newsockfd, "HTTP/1.1 200 OK\r\n"
+										  "Server: webserver-c\r\n"
+										  "Content-type: text/html\r\n\r\n"
+										  "<html><body bgcolor=\"#000000\" link=\"#F0F0D0\"><a href=\"/index/\">list files</a></body></html>");
+			}
+			else if(!strncmp(path, "/index/", 7))
+			{
+				path += 7;
+				serve_index(path, newsockfd);
 			}
 			else if(strncmp(path, "/files/", 7))
 			{
