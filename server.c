@@ -389,7 +389,7 @@ static void PB_PrintString( printbuffer_t *pb, const char *fmt, ... )
 }
 
 #define PB_DeclareString( name, size, lit ) char name ## _buffer[size] = lit; printbuffer_t name = { name ## _buffer, sizeof(lit) - 1, size }
-
+#define PB_Declare( name, size ) char name ## _buffer[size] = "";printbuffer_t name = { name ## _buffer, 0, size - 1 };
 void create_directories(const char *path)
 {
 	const char *dir_begin = path, *dir_begin_next;
@@ -448,9 +448,8 @@ void serve_file(const char *path, int newsockfd, const char *mime, int binary)
 
 void serve_list(const char *path, int fd)
 {
-	char resp_dir[MAX_RESP_SIZE];
-	char resp_fil[MAX_RESP_SIZE];
-	printbuffer_t rd = {resp_dir, 0, sizeof(resp_dir) - 1}, rf = {resp_fil, 0, sizeof(resp_fil) - 1};
+	PB_Declare( rd, MAX_RESP_SIZE );
+	PB_Declare( rf, MAX_RESP_SIZE );
 	char fpath[PATH_MAX] = {};
 	int plen = strlen(path);
 	DIR *dirp;
@@ -492,8 +491,8 @@ void serve_list(const char *path, int fd)
 	}
 
 	closedir(dirp);
-	writeall(fd, resp_dir, rd.pos);
-	writeall(fd, resp_fil, rf.pos);
+	writeall(fd, rd_buffer, rd.pos);
+	writeall(fd, rf_buffer, rf.pos);
 	WriteStringLit(fd, "{\"name\": \"\", \"type\": -1, \"size\": 0}]");
 }
 void serve_path_dav(const char *path, int fd);
@@ -502,7 +501,6 @@ void serve_list_dav(const char *path, int fd)
 {
 	char resp[MAX_RESP_SIZE];
 	char fpath[PATH_MAX] = {};
-	int len_dir = 0, len_fil = 0;
 	char *path2 = path;
 	int plen = strlen(path);
 	if(!plen)
@@ -510,25 +508,16 @@ void serve_list_dav(const char *path, int fd)
 		path2 = ".";
 		plen = 1;
 	}
-	const char resp_list[] =
-		"HTTP/1.1 207 Multi-Status\r\n"
-		"Server: webserver-c\r\n"
-		"Content-Type: text/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">";
-	DIR *dirp;
+	//const char resp_list[] =
+			DIR *dirp;
 	printf("list %s\n", path2);
 	dirp = opendir(path2);
 	if (!dirp)
 	{
-		const char resp_list1[] =
-			//"HTTP/1.1 403 Forbidden\r\n"
-			"HTTP/1.1 404 Not found\r\n"
+		WriteStringLit( fd, "HTTP/1.1 404 Not found\r\n"
 			"Server: webserver-c\r\n"
 			"Content-Length: 0\r\n"
-			"\r\n";
-			//"Content-Type: text/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\" >";
-		//usleep(10000);
-		writeall(fd, resp_list1, sizeof(resp_list1) - 1);
-		write(1, resp_list1, sizeof(resp_list1) - 1);
+			"\r\n" );
 		printf("bad dir %s %d\n", path, errno);
 		return;
 
@@ -571,26 +560,33 @@ void serve_list_dav(const char *path, int fd)
 			continue;
 		if(!dirflag)
 		{
-			writeall(fd, resp_list, sizeof(resp_list) - 1);
-			/*int len = snprintf(resp, MAX_RESP_SIZE - 1,
-				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
-				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
-				"<D:displayname>%s</D:displayname>"
-				//"<D:getetag>\"01572461888\"</D:getetag>"
-				"<D:getlastmodified>Wed, 30 Oct 2019 18:58:08 GMT</D:getlastmodified>"
-				"<D:resourcetype><D:collection/></D:resourcetype>"
-				//"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes>"
-				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
-				"", "files");
-			writeall(fd, resp, len);*/
+			WriteStringLit( fd, "HTTP/1.1 207 Multi-Status\r\n"
+				"Server: webserver-c\r\n"
+				"Content-Type: text/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">" );
+			{
+				PB_Declare( resp, 1024 );
+				PB_PrintString( &resp,
+					"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
+					"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
+					"<D:displayname></D:displayname>"
+					//"<D:getetag>\"01572461888\"</D:getetag>"
+					"<D:getlastmodified>Wed, 30 Oct 2019 18:58:08 GMT</D:getlastmodified>"
+					"<D:resourcetype><D:collection/></D:resourcetype>"
+					//"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes>"
+					"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
+					path2);
+				if( path2[0] && (path2[0] != '.' || path2[1]) )
+					writeall(fd, resp_buffer, resp.pos);
+			}
 			dirflag = 1;
 		}
-		printf("dir %s %s %d %d\n", fpath, dp->d_name, len_fil, len_dir);
+		printf("dir %s %s\n", fpath, dp->d_name);
 
 		if(S_ISDIR(sb.st_mode))
 		{
-			int len = snprintf(resp, MAX_RESP_SIZE - 1,
-				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
+			PB_Declare( resp, 1024);
+			PB_PrintString( &resp,
+				"<D:response><D:href>/files/%s/</D:href><D:propstat><D:prop>"
 				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
 				"<D:displayname>%s</D:displayname>"
 				//"<D:getetag>\"01572461888\"</D:getetag>"
@@ -599,12 +595,12 @@ void serve_list_dav(const char *path, int fd)
 				//"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes>"
 				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
 				fpath, dp->d_name);
-			writeall(fd, resp, len);
+			writeall(fd, resp_buffer, resp.pos);
 		}
 		else if(1)
 		{
-			int len = snprintf(
-				resp, MAX_RESP_SIZE - 1,
+			PB_Declare( resp, 1024 );
+			PB_PrintString( &resp,
 				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
 				"<D:displayname>%s</D:displayname>"
@@ -615,13 +611,12 @@ void serve_list_dav(const char *path, int fd)
 				//"<d:getcontenttype>text/plain</d:getcontenttype>"
 				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
 				fpath, dp->d_name, (int)sb.st_size);
-			writeall(fd, resp, len);
+			writeall(fd, resp_buffer, resp.pos);
 		}
 
 	}
 	closedir(dirp);
-	const char end[] = "</D:multistatus>";
-	writeall(fd, end, sizeof(end) - 1);
+	WriteStringLit(fd, "</D:multistatus>");
 }
 
 void serve_path_dav(const char *path, int fd)
