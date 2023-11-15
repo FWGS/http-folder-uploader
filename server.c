@@ -326,33 +326,40 @@ static void PB_Init( printbuffer_t *pb, char *buf, size_t buflen )
 	pb->pos = 0;
 	pb->buf[pb->sz] = 0;
 }
-#if ( __GNUC__ >= 3 )
-#define unlikely(x) __builtin_expect(x, 0)
-#define likely(x)   __builtin_expect(x, 1)
-#endif
 
-// Q_strncpy is the same as strlcpy
-static inline size_t Q_strncpy( char *dst, const char *src, size_t siz )
+static size_t
+S_strncpy(char *dest, const char *src, size_t dmax)
 {
-	size_t len;
-
-	if( unlikely( !dst || !src || !siz ))
+	size_t smax = dmax - 1;
+	char *orig_dest = dest;
+	if( dmax < 1 )
 		return 0;
 
-	len = strlen( src );
-	if( len + 1 > siz ) // check if truncate
-	{
-		memcpy( dst, src, siz - 1 );
-		dst[siz - 1] = 0;
+	while (dmax > 0) {
+
+		*dest = *src; /* Copy the data into the destination */
+
+		/* Check for maximum copy from source */
+		if (smax == 0) {
+			/* we have copied smax characters, add null terminator */
+			*dest = '\0';
+		}
+
+		/* Check for end of copying */
+		if (*dest == '\0') {
+			return dest - orig_dest;
+		}
+		dmax--;
+		smax--;
+		dest++;
+		src++;
 	}
-	else memcpy( dst, src, len + 1 );
 
-	return len; // count does not include NULL
+	return dest - orig_dest;
 }
-
 static void PB_WriteString( printbuffer_t *pb, const char *str )
 {
-	int len = Q_strncpy( pb->buf + pb->pos, str, pb->sz - pb->pos );
+	int len = S_strncpy( pb->buf + pb->pos, str, pb->sz - pb->pos );
 	pb->pos += len;
 	if( pb->pos > pb->sz )
 	{
