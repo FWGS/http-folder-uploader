@@ -206,20 +206,22 @@ int RB_ReadAhead( int force )
 static int RB_ReadLine( char *out, size_t maxlen )
 {
 	int res = 0;
+	maxlen--;
 	do
 	{
 		char *lineend;
 
-		int res = RB_ReadAhead(res != 0);
+		res = RB_ReadAhead(res != 0);
 		if(res < 0)
 			return res;
 
 		lineend = strchr( &read_buffer[rbstate.read_offset], '\n' );
 		if( lineend )
 		{
-			int linelen = lineend - &read_buffer[rbstate.read_offset];
-			if(maxlen > linelen) maxlen = linelen;
+			int linelen = ++lineend - &read_buffer[rbstate.read_offset];
+			if(maxlen > linelen - 1 ) maxlen = linelen - 1;
 			memcpy( out, &read_buffer[rbstate.read_offset], maxlen );
+			out[maxlen] = 0;
 			rbstate.read_offset += linelen;
 			return maxlen;
 		}
@@ -234,14 +236,14 @@ static int RB_SkipLine( void )
 	{
 		char *lineend;
 
-		int res = RB_ReadAhead(res != 0);
+		res = RB_ReadAhead(res != 0);
 		if(res < 0)
 			return res;
 
 		lineend = strchr( &read_buffer[rbstate.read_offset], '\n' );
 		if( lineend )
 		{
-			int linelen = lineend - &read_buffer[rbstate.read_offset];
+			int linelen = ++lineend - &read_buffer[rbstate.read_offset];
 			rbstate.read_offset += linelen;
 			return linelen;
 		}
@@ -447,7 +449,54 @@ void serve_file(const char *path, int newsockfd, const char *mime, int binary)
 	}
 	close(fd);
 }
+void serve_file_range( const char *path, int newsockfd, const char *mime, int start, int end )
+{
+	char resp[MAX_RESP_SIZE];
+	printbuffer_t pb;
+	int len, left = end - start + 1, rsize = MAX_RESP_SIZE;
+	struct stat sb;
+	int fd = open( path, O_RDONLY );
+	const char *fname = strrchr(path, '/');
 
+	lseek( fd, start, SEEK_SET );
+	stat( path, &sb );
+
+	if(!fname) fname = path;
+	else fname++;
+
+	PB_Init( &pb, resp, sizeof( resp ));
+	PB_PrintString( &pb, "HTTP/1.1 206 Partial Content\r\n"
+							"Server: webserver-c\r\n"
+							"etag: %d-%d\r\n"
+							"Content-Type: %s\r\n"
+							"Content-Range: bytes %d-%d/%d\r\n"
+							"Content-Length: %d\r\n"
+							"Accept-Ranges: bytes\r\n"
+							"Date: Sat, 11 Nov 2023 21:55:54 GMT\r\n"
+							"Content-Disposition : inline; filename=\"%s\"\r\n\r\n",
+					(int)time(0), (int)sb.st_size, mime,  start, end, (int)sb.st_size, left, fname );
+
+	if( fd < 0 ) return;
+
+	writeall(newsockfd, resp, pb.pos );
+	if( rsize > left) rsize = left;
+
+	while(( len = read(fd, resp, rsize)) > 0)
+	{
+		int valwrite = writeall(newsockfd, resp, len);
+		// Write to the socket
+		if (valwrite < 0) {
+			perror("webserver (write)");
+			close(fd);
+			return;
+		}
+		left -= len;
+		if( rsize > left) rsize = left;
+		if(!left)
+			break;
+	}
+	close(fd);
+}
 
 void serve_list(const char *path, int fd)
 {
@@ -567,8 +616,8 @@ void serve_list_dav(const char *path, int fd)
 				"Server: webserver-c\r\n"
 				"Content-Type: text/xml\r\n\r\n<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">" );
 			{
-				PB_Declare( resp, 1024 );
-				PB_PrintString( &resp,
+				PB_Declare( resp1, 1024 );
+				PB_PrintString( &resp1,
 					"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 					"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
 					"<D:displayname></D:displayname>"
@@ -579,7 +628,7 @@ void serve_list_dav(const char *path, int fd)
 					"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
 					path2);
 				if( path2[0] && (path2[0] != '.' || path2[1]) )
-					writeall(fd, resp_buffer, resp.pos);
+					writeall(fd, resp1_buffer, resp1.pos);
 			}
 			dirflag = 1;
 		}
@@ -587,8 +636,8 @@ void serve_list_dav(const char *path, int fd)
 
 		if(S_ISDIR(sb.st_mode))
 		{
-			PB_Declare( resp, 1024);
-			PB_PrintString( &resp,
+			PB_Declare( resp1, 1024);
+			PB_PrintString( &resp1,
 				"<D:response><D:href>/files/%s/</D:href><D:propstat><D:prop>"
 				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
 				"<D:displayname>%s</D:displayname>"
@@ -598,12 +647,12 @@ void serve_list_dav(const char *path, int fd)
 				//"<d:quota-used-bytes>163</d:quota-used-bytes><d:quota-available-bytes>11802275840</d:quota-available-bytes>"
 				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
 				fpath, dp->d_name);
-			writeall(fd, resp_buffer, resp.pos);
+			writeall(fd, resp1_buffer, resp1.pos);
 		}
 		else if(1)
 		{
-			PB_Declare( resp, 1024 );
-			PB_PrintString( &resp,
+			PB_Declare( resp1, 1024 );
+			PB_PrintString( &resp1,
 				"<D:response><D:href>/files/%s</D:href><D:propstat><D:prop>"
 				"<D:creationdate>Wed, 30 Oct 2019 18:58:08 GMT</D:creationdate>"
 				"<D:displayname>%s</D:displayname>"
@@ -614,7 +663,7 @@ void serve_list_dav(const char *path, int fd)
 				//"<d:getcontenttype>text/plain</d:getcontenttype>"
 				"</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
 				fpath, dp->d_name, (int)sb.st_size);
-			writeall(fd, resp_buffer, resp.pos);
+			writeall(fd, resp1_buffer, resp1.pos);
 		}
 
 	}
@@ -624,8 +673,6 @@ void serve_list_dav(const char *path, int fd)
 
 void serve_path_dav(const char *path, int fd)
 {
-	char resp_dir[MAX_RESP_SIZE];
-	int len_dir = 0;
 	const char *path2 = path;
 	int plen = strlen(path);
 	struct stat sb;
@@ -672,6 +719,91 @@ void serve_path_dav(const char *path, int fd)
 	//printf("clen %d\n", (int)(strlen("<?xml version=\"1.0\" encoding=\"utf-8\" ?><D:multistatus xmlns:D=\"DAV:\">") + len_dir));
 	//write(1, resp_dir, len_dir);
 	writeall( fd, resp_buffer, resp.pos );
+}
+
+void SV_Put(int newsockfd, const char *uri, int clen )
+{
+	PB_DeclareString(resp_ok, 1024,"HTTP/1.1 201 Created\r\n"
+									"Server: webserver-c\r\n"
+									"Location: /files/");
+	int fd;
+	const char *path = uri;
+	if(strncmp(path, "/files/", 7) || strstr(path, ".."))
+		_exit(1);
+
+	path += 7;
+	while(path[0] == '/')path++;
+	create_directories(path);
+	fd = open(path, O_CREAT | O_WRONLY, 0666);
+	int ret = RB_Dump( fd, clen );
+	printf("done %s\n", path);
+	if(ret > 0);
+		ftruncate(fd,ret);
+	close(fd);
+
+	if( ret >= 0)
+	{
+		PB_WriteString( &resp_ok, path );
+		PB_WriteStringLit( &resp_ok, "\r\nContent-type: text/html\r\n\r\n"
+						  "OK");
+		writeall( newsockfd, resp_ok_buffer, resp_ok.pos );
+	}
+}
+
+void SV_PutChunked( int newsockfd, const char *uri, int explen )
+{
+	PB_DeclareString(resp_ok, 1024,"HTTP/1.1 201 Created\r\n"
+									"Server: webserver-c\r\n"
+									"Location: /files/");
+	int fd;
+	const char *path = uri;
+	char chunkstr[16];
+	unsigned int chunklen;
+	size_t filelen = 0;
+
+	if(strncmp(path, "/files/", 7) || strstr(path, ".."))
+		_exit(1);
+
+	path += 7;
+	while(path[0] == '/')path++;
+	create_directories(path);
+	fd = open(path, O_CREAT | O_WRONLY, 0666);
+	do
+	{
+		int ret;
+		if( RB_ReadLine( chunkstr, 15 ) <= 0 )
+			break;
+		printf("chunk hex %s\n", chunkstr);
+
+		if( sscanf( chunkstr, "%x", &chunklen ) != 1 )
+			break;
+
+		printf("chunk len %d\n", chunklen);
+		if(!chunklen)
+			break;
+
+		ret = RB_Dump( fd, chunklen );
+		if( ret < 0)
+			break;
+		filelen += ret;
+		if( explen && filelen == explen )
+			break;
+		RB_SkipLine();
+		//RB_Dump(1, 2);
+
+
+	}while(1);
+
+	printf( "done %s %d\n", path, (int)filelen );
+
+	if(filelen > 0);
+		ftruncate(fd,filelen);
+	close(fd);
+
+	PB_WriteString( &resp_ok, path );
+	PB_WriteStringLit( &resp_ok, "\r\nContent-type: text/html\r\n\r\n"
+					  "OK");
+	writeall( newsockfd, resp_ok_buffer, resp_ok.pos );
 }
 
 
@@ -758,31 +890,22 @@ int main() {
 			int r = fork();
 			if(r == 0) // child, copy the file
 			{
-				//handleupload(newsockfd, buffer, uri);
-				PB_DeclareString(resp_ok, 1024,"HTTP/1.1 201 Created\r\n"
-												"Server: webserver-c\r\n"
-												"Location: /files/");
-				int fd;
-				char *path = uri;
-				if(strncmp(path, "/files/", 7) || strstr(path, ".."))
-					_exit(1);
-
-				path += 7;
-				while(path[0] == '/')path++;
-				create_directories(path);
-				fd = open(path, O_CREAT | O_WRONLY, 0666);
-				int ret = RB_Dump( fd, clen );
-				printf("done %s\n", path);
-				if(ret > 0);
-					ftruncate(fd,ret);
-				close(fd);
-
-				if( ret >= 0)
+				puts( buffer );
+				if( clen > 0 )
+					SV_Put( newsockfd, uri, clen );
+				else
 				{
-					PB_WriteString( &resp_ok, path );
-					PB_WriteStringLit(&resp_ok, "\r\nContent-type: text/html\r\n\r\n"
-									  "OK");
-					writeall( newsockfd, resp_ok_buffer, resp_ok.pos );
+					// Apple like to send some chunks
+					if( strcasestr( buffer, "transfer-encoding: chunked" ))
+					{
+						int explen = 0;
+						char *el = strcasestr( buffer, "x-expected-entity-length: " );
+						if(el)
+							explen = atoi( el + sizeof( "x-expected-entity-length:" ));
+						SV_PutChunked( newsockfd, uri, explen );
+					}
+					else
+						SV_Put( newsockfd, uri, 0 );
 				}
 				close(newsockfd);
 				_exit(0);
@@ -836,7 +959,16 @@ int main() {
 			}
 			else
 			{
+				char *rng = strcasestr( buffer, "\nrange: bytes=");
 				path += 7;
+				puts(buffer);
+				if( rng )
+				{
+					int start, end;
+					rng += sizeof( "\nrange: bytes" );
+					sscanf( rng, "%d-%d", &start, &end );
+					serve_file_range(path, newsockfd, "application/octet-stream", start, end );
+				}
 				serve_file(path, newsockfd, "application/octet-stream", 1);
 			}
 
