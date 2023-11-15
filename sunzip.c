@@ -113,17 +113,19 @@
                         /*   BZ2_bzDecompressEnd() */
 #endif
 
-/* ----- Language Readability Enhancements (sez me) ----- */
-
+// dev branch stuff
+#ifndef JUST_DEFLATE
 void *sunalloc(void *opaque, unsigned items, unsigned size) {
-    (void)opaque;
-        return malloc(items * (size_t)size);
-        }
-        void sunfree(void *opaque, void *ptr) {
-            (void)opaque;
-                free(ptr);
-                }
+	(void)opaque;
+	return malloc(items * (size_t)size);
+}
+void sunfree(void *opaque, void *ptr) {
+	(void)opaque;
+	free(ptr);
+}
+#endif
 
+/* ----- Language Readability Enhancements (sez me) ----- */
 
 #define local static
 #define until(c) while(!(c))
@@ -154,7 +156,7 @@ void *sunalloc(void *opaque, unsigned items, unsigned size) {
 #    error Unexpected size of long data type
 #  endif
 #endif
-
+#define NOCRC 1
 /* systems for which mkdtemp() is not provided */
 #ifdef VMS
 #  define NOMKDTEMP
@@ -232,9 +234,10 @@ local int put(void *out_desc, unsigned char *buf, unsigned len)
         buf += len;
     }
 #endif
-
+#if !NOCRC
     /* update crc and output byte count */
     out->crc = crc32(out->crc, buf, len);
+#endif
     out->count += len;
     if (out->count < len)
         out->count_hi++;
@@ -348,42 +351,6 @@ struct tree {
 };
 
 /* ----- Zip Format Operations ----- */
-
-/* list of local header offsets of skipped entries (encrypted or old method) */
-unsigned long skipped;          /* number of entries in list */
-unsigned long skiplen;          /* how many the list can hold */
-unsigned long *skiplist;        /* skipped entry list (allocated) */
-
-/* add an entry to the skip list */
-local void skipadd(unsigned long here, unsigned long here_hi)
-{
-    unsigned long size;
-#ifdef BIGLONG
-    (void)here_hi;
-#endif
-
-    /* allocate or resize list if needed */
-    if (skipped == skiplen) {
-        skiplen = skiplen ? skiplen << 1 : 512;
-#ifdef BIGLONG
-        size = skiplen * sizeof(unsigned long);
-#else
-        size = skiplen << 3;
-#endif
-        skiplist = skiplist == NULL ? malloc(size) : realloc(skiplist, size);
-        if (skiplist == NULL)
-            bye("out of memory");
-    }
-
-    /* add entry to list */
-#ifdef BIGLONG
-    skiplist[skipped++] = here;
-#else
-    skiplist[skipped << 1] = here;
-    skiplist[(skipped << 1) + 1] = here_hi;
-    skipped++;
-#endif
-}
 
 /* pull two and four-byte little-endian integers from buffer */
 #define little2(ptr) ((ptr)[0] + ((ptr)[1] << 8))
@@ -558,18 +525,14 @@ local void bad(char *why, unsigned long entry,
         fprintf(stderr, "%lx\n", here);
 }
 
-/* macro to see if made by Unix-like system */
-#define BYUNIX() (madeby == 3 || madeby == 5 || madeby == 16 || \
-                  madeby == 19 || madeby == 30)
-
 /* macro to check actual crc and lengths against expected */
 #ifdef BIGLONG
-#  define GOOD() (out->crc == crc && \
+#  define GOOD() ((NOCRC || out->crc == crc) && \
     clen == (in->count & LOW4) && ulen == (out->count & LOW4) && \
     (high ? clen_hi == (in->count >> 32) && \
             ulen_hi == (out->count >> 32) : 1))
 #else
-#  define GOOD() (out->crc == crc && \
+#  define GOOD() ( (NOCRC || out->crc == crc) && \
     clen == in->count && ulen == out->count && \
     (high ? clen_hi == in->count_hi && \
             ulen_hi == out->count_hi : 1))
@@ -643,7 +606,6 @@ local void sunzip(int file, int quiet, int write)
     z_stream strms9, *strm9 = NULL;     /* inflate9 structure */
 #endif
 	char filepath[PATH_MAX];
-
     /* initialize i/o -- note that output buffer must be 64K both for
        inflateBack9() as well as to load the maximum size name or extra
        fields */
@@ -668,8 +630,6 @@ local void sunzip(int file, int quiet, int write)
     /* process zip file */
     mode = MARK;                /* start of zip file signature sequence */
     entries = 0;                /* entry count */
-    skipped = skiplen = 0;      /* initialize skipped list */
-    skiplist = NULL;
 	do {
         /* mark current location */
         here = in->offset;
@@ -851,7 +811,6 @@ local void sunzip(int file, int quiet, int write)
                     skip(0x80000000UL, in);
                     tmp--;
                 }
-                skipadd(here, here_hi);
             }
 
             /* deduct unused input from compressed data count */
@@ -1017,8 +976,6 @@ local void sunzip(int file, int quiet, int write)
 #endif
     if (strm != NULL)
         inflateBackEnd(strm);
-    if (skiplist != NULL)
-        free(skiplist);
     free(outbuf);
     free(inbuf);
 
