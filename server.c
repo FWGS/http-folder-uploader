@@ -223,7 +223,7 @@ static int RB_ReadLine( char *out, size_t maxlen )
 			memcpy( out, &read_buffer[rbstate.read_offset], maxlen );
 			out[maxlen] = 0;
 			rbstate.read_offset += linelen;
-			return maxlen;
+			return linelen;
 		}
 	} while( res > 0 );
 	return -1;
@@ -498,6 +498,9 @@ void serve_file_range( const char *path, int newsockfd, const char *mime, int st
 	close(fd);
 }
 
+/* post request only operate in single-user mode and use last path form list/index */
+static char post_filepath[1024] = ".";
+
 void serve_list(const char *path, int fd)
 {
 	PB_Declare( rd, MAX_RESP_SIZE );
@@ -521,7 +524,8 @@ void serve_list(const char *path, int fd)
 		return;
 	if( plen > PATH_MAX - 2)
 		plen = PATH_MAX - 2;
-	strncpy(fpath, path, plen);
+	strncpy( fpath, path, plen );
+	strncpy( post_filepath, path, 1023 );
 	fpath[plen++] = '/';
 
 
@@ -577,6 +581,7 @@ void serve_index(const char *path, int fd)
 	writeall(fd, path, plen);
 	WriteStringLit(fd,"</td><td><a href=\"/index/\">/</a></td></tr>");
 	strncpy(fpath, path, plen);
+	strncpy( post_filepath, path, 1023 );
 	fpath[plen++] = '/';
 
 	while (1) {
@@ -611,7 +616,7 @@ void serve_list_dav(const char *path, int fd)
 {
 	char resp[MAX_RESP_SIZE];
 	char fpath[PATH_MAX] = {};
-	char *path2 = path;
+	const char *path2 = path;
 	int plen = strlen(path);
 	if(!plen)
 	{
@@ -864,6 +869,45 @@ void SV_PutChunked( int newsockfd, const char *uri, int explen )
 	writeall( newsockfd, resp_ok_buffer, resp_ok.pos );
 }
 
+static void SV_PostUpload(int fd, int clen, const char *boundary, int boundary_len )
+{
+	char line[1024];
+	char filename[1024] = "upload_file";
+	PB_Declare( filepath, 1024);
+	int skiplen = 0, dumpfd;
+	PB_WriteString( &filepath, post_filepath );
+	PB_WriteStringLit( &filepath, "/" );
+	if( !post_filepath[0] )
+		return;
+
+	while( line[0] != '\r' )
+	{
+		skiplen += RB_ReadLine(line, 1024) + 2;
+		if(!strncasecmp( line, "Content-Disposition: form-data; name=\"file\"; filename=\"", sizeof("Content-Disposition: form-data; name=\"file\"; filename=")))
+		{
+			char *end;
+
+			if( !strstr( line, ".." ))
+			strcpy(filename, &line[0] + sizeof( "Content-Disposition: form-data; name=\"file\"; filename=" ));
+			if(( end = strchr(filename, '\"')))
+				*end = 0;
+			printf("filename %s\n", filename);
+		}
+		puts(line);
+	}
+	PB_WriteString( &filepath, filename );
+	puts( filepath_buffer );
+
+	dumpfd = open( filepath_buffer, O_WRONLY | O_CREAT, 0755 );
+	RB_Dump( dumpfd,clen - skiplen - boundary_len );
+	close( dumpfd );
+	RB_Dump( 1, boundary_len );
+	WriteStringLit( fd, "HTTP/1.1 200 OK\r\n"
+							  "Server: webserver-c\r\n"
+							  "Content-type: text/html\r\n\r\n"
+							  "OK" );
+}
+
 
 int main() {
 	char buffer[BUFFER_SIZE] = { };
@@ -979,6 +1023,37 @@ int main() {
 				}
 			}
 		}
+		else if(!strcmp(method,"POST"))
+		{
+			int r = 0;//fork();
+			if(r == 0) // child, copy the file
+			{
+				char *boundary = strcasestr( buffer, "content-type: multipart/form-data; boundary=" );
+				puts( buffer );
+				if(boundary)
+				{
+					char *boundary_end = strchr( boundary, '\r');
+					boundary += sizeof("content-type: multipart/form-data; boundary");
+					if(!boundary_end)_exit(1);
+					int boundary_len = boundary_end - boundary;
+					SV_PostUpload( newsockfd, clen, boundary, boundary_len );
+				}
+
+
+				close(newsockfd);
+				//_exit(0);
+			}
+			else
+			{
+				close(newsockfd);
+				if(r < 0)
+				{
+					perror("fork");
+					close(sockfd);
+					return 1;
+				}
+			}
+		}
 		else if(!strcmp(method, "DELETE"))
 		{
 			char *path = uri;
@@ -1029,18 +1104,32 @@ int main() {
 			}
 			else
 			{
-				char *rng = strcasestr( buffer, "\nrange: bytes=");
-				path += 7;
-				puts(buffer);
-				if( rng )
+				int r = fork();
+				if( r == 0 )
 				{
-					int start, end;
-					rng += sizeof( "\nrange: bytes" );
-					sscanf( rng, "%d-%d", &start, &end );
-					serve_file_range(path, newsockfd, "application/octet-stream", start, end );
+					char *rng = strcasestr( buffer, "\nrange: bytes=" );
+					path += 7;
+					puts(buffer);
+					if( rng )
+					{
+						int start, end;
+						rng += sizeof( "\nrange: bytes" );
+						sscanf( rng, "%d-%d", &start, &end );
+						serve_file_range(path, newsockfd, "application/octet-stream", start, end );
+					}
+					else
+						serve_file(path, newsockfd, "application/octet-stream", 1);
 				}
 				else
-					serve_file(path, newsockfd, "application/octet-stream", 1);
+				{
+					close(newsockfd);
+					if(r < 0)
+					{
+							perror("fork");
+							close(sockfd);
+							return 1;
+					}
+				}
 			}
 
 			close(newsockfd);
