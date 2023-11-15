@@ -408,38 +408,41 @@ void create_directories(const char *path)
 #define MAX_RESP_SIZE 32768
 void serve_file(const char *path, int newsockfd, const char *mime, int binary)
 {
-	char resp_head[512] = "";
-	char resp[MAX_RESP_SIZE] = "";
+	char resp[MAX_RESP_SIZE];
+	printbuffer_t pb;
+	int len;
 	struct stat sb;
-	stat(path,&sb);
-	int fd = open(path, O_RDONLY);
+	int fd = open( path, O_RDONLY );
 	const char *fname = strrchr(path, '/');
+
+	stat( path, &sb );
+
 	if(!fname) fname = path;
 	else fname++;
-	
-	
-	int resp_len = snprintf(resp_head, 511,
-							"HTTP/1.1 200 OK\r\n"
+
+	PB_Init( &pb, resp, sizeof( resp ));
+	PB_PrintString( &pb, "HTTP/1.1 200 OK\r\n"
 							"Server: webserver-c\r\n"
 							"etag: %d-%d\r\n"
 							"Content-Type: %s\r\n"
 							"Content-Length: %d\r\n"
 							"Accept-Ranges: bytes\r\n"
 							"Date: Sat, 11 Nov 2023 21:55:54 GMT\r\n"
-							"Content-Disposition : inline; filename=\"%s\"\r\n\r\n", (int)time(0), (int)sb.st_size, mime, (int)sb.st_size, fname );
-
+							"Content-Disposition : inline; filename=\"%s\"\r\n\r\n",
+					(int)time(0), (int)sb.st_size, mime, (int)sb.st_size, fname );
+	
 	if( fd < 0 ) return;
 
-	writeall(newsockfd, resp_head, resp_len);
+	writeall(newsockfd, resp, pb.pos );
 
-	while(( resp_len = read(fd, resp, MAX_RESP_SIZE)) > 0)
+	while(( len = read(fd, resp, MAX_RESP_SIZE)) > 0)
 	{
-		int valwrite = writeall(newsockfd, resp, resp_len);
+		int valwrite = writeall(newsockfd, resp, len);
 		// Write to the socket
 		if (valwrite < 0) {
 			perror("webserver (write)");
+			close(fd);
 			return;
-		close(fd);
 		}
 	}
 	close(fd);
