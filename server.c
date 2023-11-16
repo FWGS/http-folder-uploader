@@ -846,6 +846,7 @@ void sunzip_fatal( void )
 	RB_Skip( sunzip_len + sunzip_extralen - sunzip_pos );
 	writeall( rbstate.fd, sunzip_output, sunzip_printb.pos );
 	close(rbstate.fd);
+	puts(sunzip_output);
 	_exit(1);
 }
 
@@ -978,7 +979,7 @@ void SV_PutChunked( int newsockfd, const char *uri, int explen )
 	writeall( newsockfd, resp_ok_buffer, resp_ok.pos );
 }
 
-static void SV_PostUpload(int fd, int clen, const char *boundary, int boundary_len )
+static void SV_PostUpload(int fd, const char *uri, int clen, const char *boundary, int boundary_len )
 {
 	char line[1024];
 	char filename[1024] = "upload_file";
@@ -1006,15 +1007,39 @@ static void SV_PostUpload(int fd, int clen, const char *boundary, int boundary_l
 	}
 	PB_WriteString( &filepath, filename );
 	puts( filepath_buffer );
+	if( !strcmp( uri, "/legacyzip" ))
+	{
+		sunzip_root_end = &sunzip_root[S_strncpy( sunzip_root, post_filepath, 1023 )];
+		*sunzip_root_end++ = '/';
+		sunzip_len = clen - skiplen - boundary_len ;
+		sunzip_pos = 0;
+		sunzip_extralen = boundary_len + 8;
+		PB_Init( &sunzip_printb, sunzip_output, 4096 );
 
-	dumpfd = open( filepath_buffer, O_WRONLY | O_CREAT, 0755 );
-	RB_Dump( dumpfd,clen - skiplen - boundary_len );
-	close( dumpfd );
-	RB_Dump( 1, boundary_len );
-	WriteStringLit( fd, "HTTP/1.1 200 OK\r\n"
-							  "Server: webserver-c\r\n"
-							  "Content-type: text/html\r\n\r\n"
-							  "OK" );
+		PB_WriteStringLit( &sunzip_printb, "HTTP/1.1 200 OK\r\n"
+										  "Server: webserver-c\r\n"
+										  "Content-type: text/html\r\n\r\n"
+						  );
+		sunzip( 0, 1 );
+		RB_Skip( boundary_len + 8 );
+		printf("done\n");
+
+		writeall( fd, sunzip_output, sunzip_printb.pos );
+	}
+	else
+	{
+		dumpfd = open( filepath_buffer, O_WRONLY | O_CREAT, 0755 );
+		//write(1, "beg\n", 4);
+		RB_Dump( dumpfd, clen - skiplen - boundary_len );
+		//write(1, "end\n", 4);
+		close( dumpfd );
+		RB_Dump( 1, boundary_len + 8 );
+		//RB_SkipLine();
+		WriteStringLit( fd, "HTTP/1.1 200 OK\r\n"
+								  "Server: webserver-c\r\n"
+								  "Content-type: text/html\r\n\r\n"
+								  "OK" );
+	}
 }
 
 
@@ -1134,7 +1159,7 @@ int main() {
 		}
 		else if(!strcmp(method,"POST"))
 		{
-			int r = 0;//fork();
+			int r = fork();
 			if(r == 0) // child, copy the file
 			{
 				char *boundary = strcasestr( buffer, "content-type: multipart/form-data; boundary=" );
@@ -1145,12 +1170,12 @@ int main() {
 					boundary += sizeof("content-type: multipart/form-data; boundary");
 					if(!boundary_end)_exit(1);
 					int boundary_len = boundary_end - boundary;
-					SV_PostUpload( newsockfd, clen, boundary, boundary_len );
+					SV_PostUpload( newsockfd, uri, clen, boundary, boundary_len );
 				}
 
 
 				close(newsockfd);
-				//_exit(0);
+				_exit(0);
 			}
 			else
 			{
