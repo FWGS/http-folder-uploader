@@ -125,6 +125,55 @@ void sunfree(void *opaque, void *ptr) {
 }
 #endif
 
+#ifdef SUNZIP_TEST
+typedef int sunzip_file_in;
+typedef int sunzip_file_out; // fd
+#define sunzip_out_valid(x) (x != -1)
+#define sunzip_out_invalid (-1)
+static inline int sunzip_write(sunzip_file_out file, const void *buf, size_t sz)
+{
+	return write( file, buf, sz );
+}
+static void create_directories(const char *path)
+{
+	const char *dir_begin = path, *dir_begin_next;
+	char dir_path[PATH_MAX] = "";
+	//size_t dir_len = 0;
+	while((dir_begin_next = strchr(dir_begin, '/') ))
+	{
+		dir_begin_next++;
+		memcpy(&dir_path[0] + (dir_begin - path), dir_begin, dir_begin_next - dir_begin);
+		//printf("mkdir %s\n",dir_path);
+		mkdir(dir_path, 0777);
+		dir_begin = dir_begin_next;
+	}
+}
+static inline sunzip_file_out sunzip_openout(const char *filename)
+{
+	create_directories(filename);
+	return open(filename, O_WRONLY | O_CREAT, 0666);
+}
+static inline int sunzip_closeout(sunzip_file_out file)
+{
+	return close(file);
+}
+
+static inline int sunzip_read(sunzip_file_in file, void *buffer, size_t size)
+{
+	return read(file, buffer, size);
+}
+#else
+typedef char sunzip_file_in; // unused
+typedef int sunzip_file_out; // fd
+#define sunzip_out_valid(x) ((x) != -1)
+#define sunzip_out_invalid (-1)
+int sunzip_write(sunzip_file_out file, const void *buf, size_t sz);
+
+sunzip_file_out sunzip_openout(const char *filename);
+int sunzip_closeout(sunzip_file_out file);
+int sunzip_read(sunzip_file_in file, void *buffer, size_t size);
+#endif
+
 /* ----- Language Readability Enhancements (sez me) ----- */
 
 #define local static
@@ -178,14 +227,10 @@ void sunfree(void *opaque, void *ptr) {
 
 /* Unix parent reference and replacement character (repeated) */
 #define PARENT ".."
-local int parrepl = '_';
-
 
 /* true if in the middle of a line on stdout */
 local int midline = 0;
 
-/* true to retain temporary files in the event of an error */
-local int retain = 0;
 
 /* abort with an error message */
 local int bye(char *why)
@@ -201,7 +246,7 @@ local int bye(char *why)
 
 /* structure for output processing */
 struct out {
-    int file;                   /* output file or -1 to not write */
+	sunzip_file_out file;                   /* output file or -1 to not write */
     unsigned long crc;          /* accumulated CRC-32 of output */
     unsigned long count;        /* output byte count */
     unsigned long count_hi;     /* count overflow */
@@ -210,40 +255,42 @@ struct out {
 /* process inflate output, writing if requested */
 local int put(void *out_desc, unsigned char *buf, unsigned len)
 {
-    int wrote;
-    unsigned try;
-    struct out *out = (struct out *)out_desc;
+	int wrote;
+	unsigned try;
+	struct out *out = (struct out *)out_desc;
 
 #ifndef BIGINT
-    /* handle special inflateBack9() case for 64K len */
-    if (len == 0) {
-        len = 32768U;
-        put(out, buf, len);
-        buf += len;
-    }
+	/* handle special inflateBack9() case for 64K len */
+	if (len == 0) {
+		len = 32768U;
+		put(out, buf, len);
+		buf += len;
+	}
 #endif
 #if !NOCRC
-    /* update crc and output byte count */
-    out->crc = crc32(out->crc, buf, len);
+	/* update crc and output byte count */
+	out->crc = crc32(out->crc, buf, len);
 #endif
-    out->count += len;
-    if (out->count < len)
-        out->count_hi++;
-    if (out->file != -1)
-        while (len) {   /* loop since write() may not complete request */
-            try = len >= 32768U ? 16384 : len;
-            wrote = write(out->file, buf, try);
-            if (wrote == -1)
-                bye("write error");
-            len -= wrote;
-            buf += wrote;
-        }
-    return 0;
+	out->count += len;
+	if (out->count < len)
+		out->count_hi++;
+	if (sunzip_out_valid(out->file))
+	{
+		while (len) {   /* loop since write() may not complete request */
+			try = len >= 32768U ? 16384 : len;
+			wrote = sunzip_write(out->file, buf, try);
+			if (wrote == -1)
+				bye("write error");
+			len -= wrote;
+			buf += wrote;
+		}
+	}
+	return 0;
 }
 
 /* structure for input acquisition and processing */
 struct in {
-    int file;                   /* input file */
+	sunzip_file_in file;                   /* input file */
     unsigned char *buf;         /* input buffer */
     unsigned long count;        /* input byte count */
     unsigned long count_hi;     /* count overflow */
@@ -273,7 +320,7 @@ local unsigned get(void *in_desc, unsigned char **buf)
 		*buf = next;
 	want = CHUNK;
 	do {        /* loop since read() not assured to return request */
-		got = (int)read(in->file, next, want);
+		got = (int)sunzip_read(in->file, next, want);
 		if (got == -1)
 			bye("zip file read error");
 		next += got;
@@ -525,26 +572,13 @@ local void bad(char *why, unsigned long entry,
     (high ? clen_hi == in->count_hi && \
             ulen_hi == out->count_hi : 1))
 #endif
-void create_directories(const char *path)
-{
-	const char *dir_begin = path, *dir_begin_next;
-	char dir_path[PATH_MAX] = "";
-	//size_t dir_len = 0;
-	while((dir_begin_next = strchr(dir_begin, '/') ))
-	{
-		dir_begin_next++;
-		memcpy(&dir_path[0] + (dir_begin - path), dir_begin, dir_begin_next - dir_begin);
-		//printf("mkdir %s\n",dir_path);
-		mkdir(dir_path, 0777);
-		dir_begin = dir_begin_next;
-	}
-}
+
 /* process a streaming zip file, i.e. without seeking: read input from file,
    limit output if quiet is 1, more so if quiet is >= 2, write the decompressed
    data to files if write is true, otherwise just verify the entries, overwrite
    existing files if over is true, otherwise don't -- over must not be true if
    write is false */
-local void sunzip(int file, int quiet, int write)
+void sunzip(sunzip_file_in file, int write)
 {
     enum {                      /* looking for ... */
         MARK,                   /* spanning signature (optional) */
@@ -685,13 +719,12 @@ local void sunzip(int file, int quiet, int write)
             /* create temporary file (including for directories and links) */
             if (write && (method == 0 || method == 8 || method == 9 ||
                           method == 10 || method == 12)) {
-				create_directories(filepath);
-				out->file = open(filepath, O_WRONLY | O_CREAT, 0666);
-                if (out->file == -1)
+				out->file = sunzip_openout(filepath);
+				if (!sunzip_out_valid(out->file))
                     bye("write error");
             }
             else
-                out->file = -1;
+				out->file = sunzip_out_invalid;
 
             /* initialize crc, compressed, and uncompressed counts */
             in->count = left;
@@ -786,7 +819,6 @@ local void sunzip(int file, int quiet, int write)
             }
 #endif
             else {                      /* skip encrpyted or unknown method */
-                if (quiet < 1)
                     bad(flag & 1 ? "skipping encrypted entry" :
                         "skipping unknown compression method",
                         entries, here, here_hi);
@@ -805,8 +837,8 @@ local void sunzip(int file, int quiet, int write)
             in->count -= left;
 
             /* close file, set file times */
-            if (out->file != -1) {
-                if (close(out->file))
+			if (sunzip_out_valid(out->file)) {
+				if (sunzip_closeout(out->file))
                     bye("write error");
 			  /*  times[0].tv_sec = acc;
                 times[0].tv_usec = 0;
@@ -878,8 +910,7 @@ local void sunzip(int file, int quiet, int write)
         case 0x02014b50UL:      /* central file header */
             /* first time here: any earlier mode can arrive here */
             if (mode < CENTRAL) {
-                if (quiet < 2)
-                    printf("\r%lu entr%s processed\n",
+					printf("%lu entr%s processed\n",
                            entries, entries == 1 ? "y" : "ies");
                 mode = CENTRAL;
             }
@@ -976,97 +1007,13 @@ local void sunzip(int file, int quiet, int write)
         fputs("sunzip warning: junk after end of zip file\n", stderr);
     }
 }
-
-/* catch interrupt in order to delete temporary files and directory */
-local void cutshort(int n)
-{
-    (void)n;
-    bye("user interrupt");
-}
-
+#ifdef SUNZIP_TEST
 /* process arguments and then unzip from stdin */
 int main(int argc, char **argv)
 {
-    int n, parm;
-    int quiet = 0, write = 1, over = 0;
-    char *arg;
-
-    /* catch interrupt signal */
-    signal(SIGINT, cutshort);
-
-    /* give help if input not redirected */
-    if (isatty(0)) {
-        puts("sunzip 0.5, streaming unzip by Mark Adler");
-        puts("usage: ... | sunzip [-t] [-o] [-r] [-p x] [-q[q]] [dir]");
-        puts("       sunzip [-t] [-o] [-p x] [-r] [-q[q]] [dir] < infile.zip");
-        puts("");
-        puts("\t-t: test -- don't write files");
-        puts("\t-o: overwrite existing files");
-        puts("\t-r: retain temporary files in the event of an error");
-        puts("\t-p x: replace parent reference .. with this character");
-        puts("\t-q: quiet -- display summary info and errors only");
-        puts("\t-qq: really quiet -- display errors only");
-        puts("\tdir: subdirectory to create files in (if writing)");
-        return 0;
-    }
-
-    /* scan options in arguments */
-    parm = 0;
-    for (n = 1; n < argc; n++)
-        if (parm) {
-            parrepl = argv[n][0];
-            if (parrepl == 0 || argv[n][1])
-                bye("need one character after -p");
-            parm = 0;
-        }
-        else if (argv[n][0] == '-') {
-            arg = argv[n] + 1;
-            while (*arg) {
-                switch (*arg) {
-                case 'o':           /* overwrite existing files */
-                    over = 1;
-                    break;
-                case 'p':           /* parent ".." replacement character */
-                    parm = 1;       /* get character in next arg */
-                    break;
-                case 'q':           /* quiet */
-                    quiet++;        /* qq is even more quiet */
-                    break;
-                case 'r':           /* retain temporary files */
-                    retain = 1;
-                    break;
-                case 't':           /* test */
-                    write = 0;
-                    break;
-                default:
-                    bye("unknown option");
-                }
-                arg++;
-            }
-        }
-
-    /* check option consistency */
-    if (parm)
-        bye("nothing after -p");
-    if (over && !write)
-        bye("can't combine -o with -t");
-    if (parrepl == '.')
-        fputs("sunzip warning: parent directory access allowed\n", stderr);
-
-    /* scan non-options, which is where to create and put entries in -- the
-       directory is created and then we cd in there, multiple name arguments
-       simply create deeper subdirectories for the destination */
-    for (n = 1; n < argc; n++)
-        if (parm)
-            parm = 0;
-        else if (argv[n][0] == '-') {
-            arg = argv[n] + 1;
-            while (*arg)
-                if (*arg++ == 'p')
-                    parm = 1;
-		}
-
+	(void)argc, (void)argv;
     /* unzip from stdin */
-	sunzip(0, quiet, write);
+	sunzip(0, 1);
     return 0;
 }
+#endif
