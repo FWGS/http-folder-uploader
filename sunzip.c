@@ -608,7 +608,6 @@ void sunzip(sunzip_file_in file, int write)
 	unsigned char *next;    /* pointer to next byte in input buffer */
 	unsigned char *inbuf;   /* input buffer */
 	unsigned char *outbuf;  /* output buffer and inflate window */
-	char *name;      /* file name start, save area */
 	//struct timeval times[2];            /* access and modify times */
 	//struct stat st;                     /* for retrieving times */
 	//FILE *sym;                          /* for reading symbolic link file */
@@ -619,7 +618,7 @@ void sunzip(sunzip_file_in file, int write)
 	unsigned char *back;                /* returned next pointer */
 	z_stream strms9, *strm9 = NULL;     /* inflate9 structure */
 #endif
-	char filepath[PATH_MAX];
+	char filepath[1024];
 #ifdef BIGINT
 	static int32_t inbuf_s[CHUNK / sizeof(int)], outbuf_s[16384];
 #else
@@ -639,7 +638,6 @@ void sunzip(sunzip_file_in file, int write)
 	in->buf = inbuf;
 	in->offset = 0;
 	in->offset_hi = 0;
-	name = filepath;
 
 	/* process zip file */
 	mode = MARK;                /* start of zip file signature sequence */
@@ -696,8 +694,8 @@ void sunzip(sunzip_file_in file, int write)
 
 			/* skip file name (will get from central directory later) */
 			field(nlen, in);
-			memcpy(name, (char*)outbuf, nlen);
-			name[nlen] = 0;
+			memcpy(filepath, (char*)outbuf, nlen>1023?1023:nlen);
+			filepath[nlen>1023?1023:nlen] = 0;
 			/* process extra field -- get entry times if there and, if needed,
 			   get zip64 lengths */
 			field(xlen, in);            /* get extra field into outbuf */

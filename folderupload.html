@@ -861,7 +861,21 @@ function uploadZip()
 		catch(e){writeerror(e);document.getElementById("uploadzip").onclick = null;}
 		return true;
 	}
-	// todo: XHR here
+
+	var req = getXMLHttpRequest();
+	req.open("PUT", "/zip/"+list_path+ (list_path.length >0?"/":""), true);
+	req.onreadystatechange = function(){
+		if (req.readyState === XMLHttpRequest_DONE) {
+				var status = req.status;
+			writelog("status("+list_path+"):"+status, true);
+
+			if ((status === -1 || status === 0 || (status >= 200 && status < 400))) {
+				writelog(req.responseText);
+				updateList();
+			}
+		}
+	}
+	req.send(document.getElementById("zipfile").files[0]);
 	return false;
 }
 
