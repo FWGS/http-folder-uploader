@@ -157,6 +157,7 @@ void sunfree(void *opaque, void *ptr) {
 #  endif
 #endif
 #define NOCRC 1
+#define SKIP_CENTRAL
 /* systems for which mkdtemp() is not provided */
 #ifdef VMS
 #  define NOMKDTEMP
@@ -195,19 +196,6 @@ local int bye(char *why)
     exit(1);
     return 0;       /* to make compiler happy -- will never get here */
 }
-
-
-/* allocate memory and abort on failure */
-local void *alloc(size_t size)
-{
-    void *got;
-
-    got = malloc(size);
-    if (got == NULL)
-        bye("out of memory");
-    return got;
-}
-
 
 /* ----- Input/Output Operations ----- */
 
@@ -411,7 +399,7 @@ local int zip64local(unsigned char *extra, unsigned xlen,
 
 /* 32-bit marker for presence of 64-bit lengths */
 #define LOW4 0xffffffffUL
-
+#ifndef SKIP_CENTRAL
 /* look for a zip64 block in the central header and update offset */
 local void zip64central(unsigned char *extra, unsigned xlen,
                         unsigned long clen, unsigned long ulen,
@@ -436,7 +424,7 @@ local void zip64central(unsigned char *extra, unsigned xlen,
         }
     }
 }
-
+#endif
 
 #ifndef JUST_DEFLATE
 
@@ -606,17 +594,19 @@ local void sunzip(int file, int quiet, int write)
     z_stream strms9, *strm9 = NULL;     /* inflate9 structure */
 #endif
 	char filepath[PATH_MAX];
-    /* initialize i/o -- note that output buffer must be 64K both for
+#ifdef BIGINT
+	static int32_t inbuf_s[CHUNK / sizeof(int)], outbuf_s[16384];
+#else
+	static char inbuf_s[CHUNK], outbuf_s[65536];
+#endif
+
+
+	/* initialize i/o -- note that output buffer must be 64K both for
        inflateBack9() as well as to load the maximum size name or extra
        fields */
-    inbuf = alloc(CHUNK);
-#ifdef BIGINT
-    outbuf = alloc(65536);
-#else
-    outbuf = calloc(4, 16384);
-    if (outbuf == NULL)
-        bye("out of memory");
-#endif
+	outbuf = (unsigned char*) outbuf_s;
+	inbuf = (unsigned char*) inbuf_s;
+
     left = 0;
     next = inbuf;
     in->file = file;
@@ -658,13 +648,9 @@ local void sunzip(int file, int quiet, int write)
                 bye("zip file format error (local file header misplaced)");
             mode = LOCAL;
             entries++;
-            if (quiet < 2 && entries % 100 == 0) {
-                printf("\r%lu", entries);
-                fflush(stdout);
-            }
 
             /* process local header */
-            get2(in);                   /* version needed to extract */
+			(void)get2(in);                   /* version needed to extract */
             flag = get2(in);            /* general purpose flags */
             if ((flag & 9) == 9)
                 bye("cannot skip encrypted entry with deferred lengths");
@@ -674,7 +660,7 @@ local void sunzip(int file, int quiet, int write)
             if ((flag & 8) && method != 8 && method != 9 && method != 12)
                 bye("cannot handle deferred lengths for pre-deflate methods");
 		   // acc = mod = dos2time(get4(in));     /* file date/time */
-			get4(in);
+			(void)get4(in);
             crc = get4(in);             /* uncompressed CRC check value */
             clen = get4(in);            /* compressed size */
             clen_hi = 0;
@@ -686,7 +672,7 @@ local void sunzip(int file, int quiet, int write)
 
             /* skip file name (will get from central directory later) */
 			field(nlen, in);
-			strncpy(name, (char*)outbuf, nlen);
+			memcpy(name, (char*)outbuf, nlen);
 			name[nlen] = 0;
             /* process extra field -- get entry times if there and, if needed,
                get zip64 lengths */
@@ -884,7 +870,7 @@ local void sunzip(int file, int quiet, int write)
                 if (!GOOD()) {
                     bad("compressed data corrupted, check values mismatch",
                         entries, here, here_hi);
-                    bye("zip file corrupted -- cannot continue");
+					//bye("zip file corrupted -- cannot continue");
                 }
             }
             break;
@@ -897,7 +883,7 @@ local void sunzip(int file, int quiet, int write)
                            entries, entries == 1 ? "y" : "ies");
                 mode = CENTRAL;
             }
-
+#ifndef SKIP_CENTRAL
             /* read central header */
             if (mode != CENTRAL)
                 bye("zip file format error (central file header misplaced)");
@@ -926,6 +912,13 @@ local void sunzip(int file, int quiet, int write)
 
             /* skip comment field -- last thing in central header */
             skip(flag, in);
+#else
+			skip(24, in);
+			nlen = get2(in);
+			xlen = get2(in);
+			flag = get2(in);
+			skip(12 + nlen + xlen + flag, in);
+#endif
             break;
 
         case 0x05054b50UL:      /* digital signature */
@@ -976,8 +969,6 @@ local void sunzip(int file, int quiet, int write)
 #endif
     if (strm != NULL)
         inflateBackEnd(strm);
-    free(outbuf);
-    free(inbuf);
 
     /* check for junk */
     if (left != 0 || get(in, NULL) != 0) {
