@@ -110,6 +110,28 @@ static int DumpAll(int fd, int outfd, char *buffer, size_t bufsize, size_t len )
 	return received;
 }
 
+static int SkipAll(int fd, char *buffer, size_t bufsize, size_t len )
+{
+	size_t received = 0;
+	do
+	{
+		int rsize = bufsize;
+		int res;
+
+		if( rsize > len - received ) rsize = len - received;
+		res = recv(fd, buffer, rsize, 0);
+		if( res >= 0)
+		{
+			received += res;
+		}
+		else
+			return res;
+	}
+	while(received < len);
+
+	return received;
+}
+
 
 #define READ_BUFFER_SIZE BUFFER_SIZE
 static char read_buffer[READ_BUFFER_SIZE];
@@ -173,10 +195,32 @@ static int RB_Dump( int fd, size_t len )
 	}
 }
 
-static void RB_Skip( size_t len )
+static int RB_Skip( size_t len )
 {
+	// flush alreade read data
+	int availiable = rbstate.ahead_offset - rbstate.read_offset;
 
+	if( availiable > len )
+		availiable = len;
+
+	len -= availiable;
+
+	rbstate.read_offset += availiable;
+
+	if( rbstate.ahead_offset == rbstate.read_offset ) // do not need any data in buffer, may reset buffer to beginning
+		rbstate.ahead_offset = rbstate.read_offset = 0;
+
+	if(len == 0)
+		return availiable;
+	else
+	{
+		int rd = SkipAll( rbstate.fd, &read_buffer[rbstate.ahead_offset], READ_BUFFER_SIZE - rbstate.ahead_offset, len );
+		if( rd < 0) return rd;
+		return rd + availiable;
+	}
 }
+
+
 static void RB_Init( int fd )
 {
 	rbstate.fd = fd;
@@ -379,7 +423,7 @@ static void PB_WriteStringLen( printbuffer_t *pb, const char *str, size_t len )
 
 #define PB_WriteStringLit(p, x) PB_WriteStringLen(p, x, sizeof( x ) - 1)
 
-static void PB_PrintString( printbuffer_t *pb, const char *fmt, ... )
+void PB_PrintString( printbuffer_t *pb, const char *fmt, ... )
 {
 	int res;
 	va_list args;
@@ -403,12 +447,12 @@ void create_directories(const char *path)
 {
 	const char *dir_begin = path, *dir_begin_next;
 	char dir_path[PATH_MAX] = "";
-	size_t dir_len = 0;
-	while(dir_begin_next = strchr(dir_begin, '/'))
+	//size_t dir_len = 0;
+	while((dir_begin_next = strchr(dir_begin, '/')))
 	{
 		dir_begin_next++;
 		memcpy(&dir_path[0] + (dir_begin - path), dir_begin, dir_begin_next - dir_begin);
-		printf("mkdir %s\n",dir_path);
+		//printf("mkdir %s\n",dir_path);
 		mkdir(dir_path, 0777);
 		dir_begin = dir_begin_next;
 	}
@@ -790,14 +834,72 @@ void serve_path_dav(const char *path, int fd)
 	//write(1, resp_dir, len_dir);
 	writeall( fd, resp_buffer, resp.pos );
 }
+#include "sunzip_integration.h"
+static char sunzip_root[1024];
+static char *sunzip_root_end;
+static size_t sunzip_len, sunzip_pos, sunzip_extralen;
+struct printbuffer_s sunzip_printb;
+static char sunzip_output[4096];
 
-void SV_Put(int newsockfd, const char *uri, int clen )
+void sunzip_fatal( void )
+{
+	RB_Skip( sunzip_len + sunzip_extralen - sunzip_pos );
+	writeall( rbstate.fd, sunzip_output, sunzip_printb.pos );
+	close(rbstate.fd);
+	_exit(1);
+}
+
+int sunzip_read(sunzip_file_in file, void *buffer, size_t size)
+{
+	int ret;
+	if( sunzip_pos + size > sunzip_len )
+		size = sunzip_len - sunzip_pos;
+	if( size == 0 )
+		return 0;
+	printf("read %d\n", size);
+	ret = RB_Read(buffer, size);
+	if( ret > 0)
+		sunzip_pos += ret;
+	return ret;
+}
+sunzip_file_out sunzip_openout(const char *filename)
+{
+	S_strncpy( sunzip_root_end, filename, &sunzip_root[1023] - sunzip_root_end );
+	create_directories( sunzip_root );
+	printf( "%s\n", sunzip_root );
+	return open( sunzip_root, O_WRONLY | O_CREAT, 0777 );
+}
+
+static void SV_PutZip(int fd, const char *path, int clen )
+{
+	while(path[0] == '/')path++;
+	sunzip_root_end = &sunzip_root[S_strncpy( sunzip_root, path, 1023 )];
+	sunzip_len = clen;
+	sunzip_pos = sunzip_extralen = 0;
+	PB_Init( &sunzip_printb, sunzip_output, 4096 );
+
+	PB_WriteStringLit( &sunzip_printb, "HTTP/1.1 200 OK\r\n"
+									  "Server: webserver-c\r\n"
+									  "Content-type: text/html\r\n\r\n"
+									   );
+	sunzip( 0, 1 );
+
+	writeall( fd, sunzip_output, sunzip_printb.pos );
+}
+
+
+static void SV_Put(int newsockfd, const char *uri, int clen )
 {
 	PB_DeclareString(resp_ok, 1024,"HTTP/1.1 201 Created\r\n"
 									"Server: webserver-c\r\n"
 									"Location: /files/");
 	int fd;
 	const char *path = uri;
+	if(!strncmp(path, "/zip/", 4))
+	{
+		SV_PutZip( newsockfd, uri + 4, clen );
+		return;
+	}
 	if(strncmp(path, "/files/", 7) || strstr(path, ".."))
 		_exit(1);
 

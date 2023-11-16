@@ -162,6 +162,9 @@ static inline int sunzip_read(sunzip_file_in file, void *buffer, size_t size)
 {
 	return read(file, buffer, size);
 }
+#define sunzip_printerr(...) fprintf(stderr, __VA_ARGS__)
+#define sunzip_printout(...) fprintf(stderr, __VA_ARGS__)
+#define sunzip_fatal() exit(1);
 #else
 #include "sunzip_integration.h"
 #endif
@@ -220,18 +223,13 @@ static inline int sunzip_read(sunzip_file_in file, void *buffer, size_t size)
 /* Unix parent reference and replacement character (repeated) */
 #define PARENT ".."
 
-/* true if in the middle of a line on stdout */
-local int midline = 0;
-
 
 /* abort with an error message */
 local int bye(char *why)
 {
-	putchar(midline ? '\n' : '\r');
-	fflush(stdout);
-	fprintf(stderr, "sunzip abort: %s\n", why);
-	exit(1);
-	return 0;       /* to make compiler happy -- will never get here */
+
+	sunzip_printerr("sunzip abort: %s\n", why);
+	sunzip_fatal();
 }
 
 /* ----- Input/Output Operations ----- */
@@ -542,14 +540,11 @@ local unsigned bunzip2(unsigned char *next, unsigned left,
 local void bad(char *why, unsigned long entry,
 			   unsigned long here, unsigned long here_hi)
 {
-	putchar(midline ? '\n' : '\r');
-	midline = 0;
-	fflush(stdout);
-	fprintf(stderr, "sunzip error: %s in entry #%lu at offset 0x", why, entry);
+	sunzip_printerr("sunzip error: %s in entry #%lu at offset 0x", why, entry);
 	if (here_hi)
-		fprintf(stderr, "%lx%08lx\n", here_hi, here);
+		sunzip_printerr("%lx%08lx\n", here_hi, here);
 	else
-		fprintf(stderr, "%lx\n", here);
+		sunzip_printerr("%lx\n", here);
 }
 
 /* macro to check actual crc and lengths against expected */
@@ -898,7 +893,7 @@ void sunzip(sunzip_file_in file, int write)
 		case 0x02014b50UL:      /* central file header */
 			/* first time here: any earlier mode can arrive here */
 			if (mode < CENTRAL) {
-					printf("%lu entr%s processed\n",
+					sunzip_printout("%lu entr%s processed\n",
 						   entries, entries == 1 ? "y" : "ies");
 				mode = CENTRAL;
 			}
