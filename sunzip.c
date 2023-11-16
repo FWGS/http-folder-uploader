@@ -223,12 +223,12 @@ static inline int sunzip_read(sunzip_file_in file, void *buffer, size_t size)
 /* Unix parent reference and replacement character (repeated) */
 #define PARENT ".."
 
-
+static unsigned long entries;  /* number of entries seen */
 /* abort with an error message */
 local int bye(char *why)
 {
-
 	sunzip_printerr("sunzip abort: %s\n", why);
+	sunzip_printerr("processed before error: %d\n", entries);
 	sunzip_fatal();
 }
 
@@ -579,7 +579,6 @@ void sunzip(sunzip_file_in file, int write)
 	int ret = 0;            /* return value from zlib functions */
 	int high;               /* true if have eight-byte length information */
 	unsigned left;          /* bytes left in input buffer */
-	unsigned long entries;  /* number of entries seen */
 	//unsigned long exist;    /* how many already there so not written */
 	unsigned flag;          /* general purpose flags from zip header */
 	unsigned method;        /* compression method */
@@ -973,6 +972,7 @@ void sunzip(sunzip_file_in file, int write)
 			break;
 
 		default:
+			sunzip_printerr("bad signature 0x%x at %lu, mode %d\n", tmp4, in->offset, mode );
 			bye("zip file format error (unknown zip signature)");
 		}
 	} until (mode == END);              /* until end record reached (or EOF) */

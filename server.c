@@ -844,6 +844,7 @@ static char sunzip_output[4096];
 void sunzip_fatal( void )
 {
 	RB_Skip( sunzip_len + sunzip_extralen - sunzip_pos );
+	PB_PrintString( &sunzip_printb, "sunzip: fatal after %d of %d bytes\n", (int)sunzip_pos, (int)sunzip_len );
 	writeall( rbstate.fd, sunzip_output, sunzip_printb.pos );
 	close(rbstate.fd);
 	puts(sunzip_output);
