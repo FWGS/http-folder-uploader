@@ -700,7 +700,7 @@ void sunzip(sunzip_file_in file, int write)
 								  &clen, &clen_hi, &ulen, &ulen_hi);
 
 			/* create temporary file (including for directories and links) */
-			if (write && (method == 0 || method == 8 || method == 9 ||
+			if (write && nlen && (filepath[nlen - 1] != PATHDELIM) && (method == 0 || method == 8 || method == 9 ||
 						  method == 10 || method == 12)) {
 				out->file = sunzip_openout(filepath);
 				if (!sunzip_out_valid(out->file))
