@@ -810,7 +810,7 @@ function updateList()
 						row.appendChild(cell);
 						cell = document.createElement("td");
 						link = document.createElement("button");
-						link.data = "/files/"+list_path+(list_path.length >0?"/":"")+item.name;
+						link.data = "/zip/"+list_path+(list_path.length >0?"/":"")+item.name+".zip";
 						link.onclick = zipClick;
 						link.appendChild(document.createTextNode("zip"));
 						cell.appendChild(link);

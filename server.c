@@ -1044,6 +1044,60 @@ static void SV_PostUpload(int fd, const char *uri, int clen, const char *boundar
 }
 
 
+#include "zipflow.h"
+#if 0
+void SV_ZipFlow( ZIP *zip, const char *path, int fd )
+{
+	char fpath[PATH_MAX] = {};
+	int plen = strlen(path);
+	DIR *dirp;
+
+	if(!plen)
+	{
+		path = ".";
+		plen = 1;
+	}
+
+	printf("zip %s\n", path);
+	dirp = opendir(path);
+	if (!dirp)
+		return;
+	if( plen > PATH_MAX - 2)
+		plen = PATH_MAX - 2;
+	strncpy( fpath, path, plen );
+	fpath[plen++] = '/';
+
+
+	while (1) {
+		struct dirent *dp;
+		struct stat sb;
+
+		dp = readdir(dirp);
+		if (!dp)
+			break;
+		if (dp->d_name[0] == '.')// && !dp->d_name[1])
+			continue;
+		strncpy(&fpath[plen], dp->d_name, PATH_MAX - plen - 1);
+		if (stat(fpath, &sb) != 0)
+			continue;
+
+		if( S_ISDIR(sb.st_mode) )
+		{
+			printf("zipdir %s\n", dp->d_name);
+			SV_ZipFlow( zip, fpath, fd );
+		}
+		else
+		{
+			printf("zipfile %s\n", dp->d_name);
+			zip_entry( zip, fpath );
+		}
+	}
+
+	closedir(dirp);
+}
+#endif
+
+
 int main() {
 	char buffer[BUFFER_SIZE] = { };
 
@@ -1220,6 +1274,26 @@ int main() {
 			{
 				path += 6;
 				serve_list(path, newsockfd);
+			}
+			else if(!strncmp(path, "/zip/", 5))
+			{
+				FILE *f = fdopen( newsockfd, "wb" );
+				ZIP *zip = zip_open( f, 1 );
+				char *p;
+				path += 5;
+				p = strrchr( path, '.' );
+				if(p)*p = 0;
+
+
+				WriteStringLit( newsockfd, "HTTP/1.1 200 OK\r\n"
+								   "Server: webserver-c\r\n"
+								   "Content-Type: application/x-zip-compressed\r\n"
+								   "Content-Disposition : attachment; filename=\"folder.zip\"\r\n\r\n" );
+
+				//SV_ZipFlow( zip, path, newsockfd );
+				zip_entry( zip, path );
+				zip_close( zip );
+				fclose(f);
 			}
 			else if(!strcmp(path, "/indexredir"))
 			{
