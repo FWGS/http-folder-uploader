@@ -934,7 +934,10 @@ try{
 		processFiles(event.target.files);
 	};
 	document.getElementById("zipfile").onchange = function(event) {
-		document.getElementById("uploadzip").disabled = document.getElementById("zipfile").files.length == 0;
+		if(enable_fileapi.checked)
+			document.getElementById("uploadzip").disabled = document.getElementById("zipfile").files.length == 0;
+		else
+			document.getElementById("uploadzip").disabled = false;
 	};
 }catch(e){writeerror(e);}
 
