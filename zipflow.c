@@ -26,6 +26,10 @@
 #  define CHUNK 262144
 #endif
 
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+
 // Information on each entry saved for the central directory. This takes up 64
 // to 72 bytes, plus the zero-terminated file name allocation for each entry.
 typedef struct {
@@ -50,7 +54,6 @@ typedef struct {
 typedef struct {
     void *handle;               // user opaque pointer for put() function
     int (*put)(void *, void const *, size_t);   // write streaming data
-    FILE *out;                  // output file for streaming data
     unsigned char *data;        // uncompressed deflate input buffer
     unsigned char *comp;        // compressed deflate output buffer
     uint64_t off;               // current offset in zip file
@@ -70,11 +73,19 @@ typedef struct {
     z_stream strm;              // re-useable deflate engine
 } zip_t;
 
+#ifndef PREALLOC_PATH
+#define PREALLOC_PATH 512
+#endif
+#ifndef PREALLOC_HEAD
+#define PREALLOC_HEAD 512
+#endif
+
 // Constant in zip_t for validity check.
 #define ID 3989422804
 
 // Issue a message. If set, use the registered log() function instead of
 // writing to stderr.
+#ifndef warn
 #define warn(...) \
     zip_msg(zip, __VA_ARGS__)
 static void zip_msg(zip_t *zip, char const *fmt, ...) {
@@ -107,7 +118,7 @@ static void zip_msg(zip_t *zip, char const *fmt, ...) {
         zip->log(zip->hook, msg);
     }
 }
-
+#endif
 // Write the size bytes at ptr to the zip file, updating the offset. If ptr is
 // NULL, then flush the output. If there is an error, block all subsequent
 // writes. All output to the stream goes through this function.
@@ -120,16 +131,6 @@ static void zip_put(zip_t *zip, void const *ptr, size_t size) {
         zip->off += size;
 }
 
-// Default put() function for writing to the file zip->out.
-static int zip_write(void *handle, void const *ptr, size_t size) {
-    zip_t *zip = (zip_t *)handle;
-    int ret = ptr == NULL ? fflush(zip->out) :
-                            fwrite(ptr, 1, size, zip->out) < size;
-    if (ret)
-        warn("write error: %s -- aborting", strerror(errno));
-    return ret;
-}
-
 // Allocate, initialize, and return a zip_t structure. Provide starting
 // allocations for the path and list of headers. Fire up the deflate engine,
 // using level for the compression level.
@@ -138,7 +139,6 @@ static ZIP *zip_init(int level) {
     assert(zip != NULL && "out of memory");
     zip->handle = NULL;
     zip->put = NULL;
-    zip->out = NULL;
     zip->data = malloc(CHUNK);
     zip->comp = malloc(CHUNK);
     assert(zip->data != NULL && zip->comp != NULL && "out of memory");
@@ -149,11 +149,11 @@ static ZIP *zip_init(int level) {
     zip->feed = 0;
     zip->level = level;
     zip->plen = 0;
-    zip->pmax = 512;
+    zip->pmax = PREALLOC_PATH;
     zip->path = malloc(zip->pmax);
     assert(zip->path != NULL && "out of memory");
     zip->hnum = 0;
-    zip->hmax = 512;
+    zip->hmax = PREALLOC_HEAD;
     zip->head = malloc(zip->hmax * sizeof(head_t));
     assert(zip->head != NULL && "out of memory");
     zip->hook = NULL;
@@ -190,6 +190,7 @@ static ZIP *zip_init(int level) {
 // seconds, since the DOS time can only represent even seconds. If the Unix
 // time is before 1980, the minimum DOS time of Jan 1, 1980 is used.
 static void put_time(unsigned char *dos, time_t clock) {
+#ifndef NO_TIME
     clock += clock & 1;
     struct tm *s = localtime(&clock);
     if (s == NULL) {
@@ -208,6 +209,9 @@ static void put_time(unsigned char *dos, time_t clock) {
         dos[2] = ((s->tm_mon + 1) << 5) + s->tm_mday;
         dos[3] = ((s->tm_year - 80) << 1) + ((s->tm_mon + 1) >> 3);
     }
+#else
+	memset(dos,0,4);
+#endif
 }
 
 // Representation of compression level for general purpose bit flag.
@@ -221,21 +225,21 @@ static void zip_local(zip_t *zip) {
     head_t const *head = zip->head + zip->hnum;
 
     // Local header.
-    unsigned char local[30];
-    PUT4(local, 0x04034b50);        // local file header signature
-    PUT2(local + 4,                 // version needed to extract (2.0 or 4.5)
+    unsigned char hlocal[30];
+    PUT4(hlocal, 0x04034b50);        // local file header signature
+    PUT2(hlocal + 4,                 // version needed to extract (2.0 or 4.5)
          head->off >= MAX32 ? 45 : 20);
-    PUT2(local + 6, 0x808 + LEVEL());   // UTF-8 name, level, data descriptor
-    PUT2(local + 8, 8);             // deflate compression method
-    put_time(local + 10, head->mtime);  // modified time and date (4 bytes)
-    PUT4(local + 14, 0);            // CRC-32 (in data descriptor)
-    PUT4(local + 18, 0);            // compressed size (in data descriptor)
-    PUT4(local + 22, 0);            // uncompressed size (in data descriptor)
-    PUT2(local + 26, head->nlen);   // file name length (name follows header)
-    PUT2(local + 28, 0);            // extra field length
+    PUT2(hlocal + 6, 0x808 + LEVEL());   // UTF-8 name, level, data descriptor
+    PUT2(hlocal + 8, 8);             // deflate compression method
+    put_time(hlocal + 10, head->mtime);  // modified time and date (4 bytes)
+    PUT4(hlocal + 14, 0);            // CRC-32 (in data descriptor)
+    PUT4(hlocal + 18, 0);            // compressed size (in data descriptor)
+    PUT4(hlocal + 22, 0);            // uncompressed size (in data descriptor)
+    PUT2(hlocal + 26, head->nlen);   // file name length (name follows header)
+    PUT2(hlocal + 28, 0);            // extra field length
 
     // Write the local header.
-    zip_put(zip, local, sizeof(local));
+    zip_put(zip, hlocal, sizeof(hlocal));
     zip_put(zip, head->name, head->nlen);
 }
 
@@ -245,7 +249,7 @@ static void zip_local(zip_t *zip) {
 // for deflation are allocated on the stack. If a write error is encountered,
 // the deflation process is abandoned, since the result won't be going anywhere
 // anyway.
-static void zip_deflate(zip_t *zip, FILE *in) {
+static void zip_deflate(zip_t *zip, int in) {
     head_t *head = zip->head + zip->hnum;
     head->ulen = 0;
     head->clen = 0;
@@ -254,13 +258,14 @@ static void zip_deflate(zip_t *zip, FILE *in) {
     int eof = 0, ret;
     do {
         if (zip->strm.avail_in == 0 && !eof) {
-            zip->strm.avail_in = fread(zip->data, 1, CHUNK, in);
+            int r = read(in, zip->data, CHUNK);
+            zip->strm.avail_in = r>0?r:0;
             zip->strm.next_in = zip->data;
             head->ulen += zip->strm.avail_in;
             head->crc = crc32(head->crc, zip->data, zip->strm.avail_in);
             if (zip->strm.avail_in < CHUNK) {
                 eof = 1;
-                if (ferror(in)) {
+                if (r < 0) {
                     warn("read error on %s: %s -- entry omitted",
                          zip->path, strerror(errno));
                     zip->omit = 1;  // finish, but omit from directory
@@ -326,9 +331,9 @@ static void zip_file(zip_t *zip) {
 
     // Make sure we can open it for reading first. We know it's there, but
     // perhaps we don't have permission to read it.
-    FILE *in = fopen(zip->path, "rb");
-    if (in == NULL) {
-        warn("could not open %s for reading -- skipping", zip->path);
+    int in = open(zip->path, O_RDONLY | O_BINARY);
+    if (in < 0) {
+        warn("could not open %s for reading: %s -- skipping", zip->path, strerror(errno));
         return;
     }
 
@@ -349,7 +354,7 @@ static void zip_file(zip_t *zip) {
     // directory.
     zip_local(zip);
     zip_deflate(zip, in);
-    fclose(in);
+    close(in);
     zip_desc(zip);
     if (zip->omit) {
         free(head->name);
@@ -479,7 +484,7 @@ static void zip_scan(zip_t *zip) {
         return;
     }
 
-    if ((st.st_mode & S_IFMT) == S_IFDIR) {
+    if (S_ISDIR(st.st_mode)) {
         // zip->path is a directory. Open and traverse the directory.
         DIR *dir = opendir(zip->path);
         if (dir == NULL) {
@@ -673,19 +678,6 @@ static int zip_clean(zip_t *zip) {
     zip->id = 0;
     free(zip);
     return bad;
-}
-
-// ------ exposed functions ------
-
-// See comments in zipflow.h.
-ZIP *zip_open(FILE *out, int level) {
-    if (out == NULL || level < -1 || level > Z_BEST_COMPRESSION)
-        return NULL;
-    zip_t *zip = zip_init(level);
-    zip->out = out;
-    zip->handle = zip;
-    zip->put = zip_write;
-    return (ZIP *)zip;
 }
 
 // See comments in zipflow.h.

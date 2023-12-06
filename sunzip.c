@@ -230,6 +230,7 @@ local int bye(char *why)
 	sunzip_printerr("sunzip abort: %s\n", why);
 	sunzip_printerr("processed before error: %d\n", entries);
 	sunzip_fatal();
+	return 1;
 }
 
 /* ----- Input/Output Operations ----- */

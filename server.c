@@ -1,6 +1,7 @@
 // webserver.c
 // strcasestr
-#define NO_ZIPFLOW
+//#define NO_ZIPFLOW
+#define INCLUDE_ZIPFLOW
 #define INCLUDE_SUNZIP
 #define INCLUDE_ZLIB
 #define JUST_DEFLATE
@@ -1139,6 +1140,10 @@ void SV_ZipFlow( ZIP *zip, const char *path, int fd )
 }
 #endif
 
+static int zflow_write(void *fd, const void *ptr, size_t len)
+{
+	return writeall((int)fd,ptr,len) != len;
+}
 
 //__attribute__((force_align_arg_pointer)) 
 int main() {
@@ -1333,8 +1338,7 @@ int main() {
 			else if(!strncmp(path, "/zip/", 5))
 			{
 #ifndef NO_ZIPFLOW
-				FILE *f = fdopen( newsockfd, "wb" );
-				ZIP *zip = zip_open( f, 1 );
+				ZIP *zip = zip_pipe( (void*)newsockfd, zflow_write, 1 );
 				char *p;
 				path += 5;
 				p = strrchr( path, '.' );
@@ -1612,16 +1616,24 @@ int main() {
 	close(sockfd);
 	return 0;
 }
-#ifdef INCLUDE_SUNZIP
 #define OF(x) x
+#ifdef INCLUDE_SUNZIP
 #include "sunzip.c"
-#endif
-#ifdef INCLUDE_ZLIB
+#undef local
+#undef CHUNK
 #include "zlib/infback.c"
 #undef PULLBYTE
 #include "zlib/inffast.c"
 #include "zlib/inflate.c"
 #include "zlib/inftrees.c"
+#endif
+#ifdef INCLUDE_ZIPFLOW
+//#undef local
+#define warn(f,...) printf(f"\n",__VA_ARGS__)
+#include "zipflow.c"
+#include "zlib/deflate.c"
+#include "zlib/trees.c"
+#include "zlib/adler32.c"
+#endif
 #undef word
 #include "zlib/crc32.c"
-#endif

@@ -53,14 +53,18 @@ typedef void* FILE;
 #define va_end __builtin_va_end
 #define va_start __builtin_va_start
 #define recv(a,b,c,d) read(a,b,c)
+
+#ifdef __arm__
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_IFDIR 0040000
 #define S_IFMT 00170000
-#ifdef __arm__
+#define S_IFREG  0100000
 #undef stat
 #define stat stat64
 #else
 #define S_ISDIR(m) (m > 1) // WTF??? stat seems to be completely broken on x86_64?
+#define S_IFREG  1
+#define S_IFMT 1
 #endif
 
 #define PrintWrap(...) PB_PrintString( &global_printbuf, __VA_ARGS__);write(1,global_printbuf_buffer, global_printbuf.pos);global_printbuf.pos = 0;
@@ -74,7 +78,8 @@ typedef void* FILE;
 #define puts(x) write(1, (const char*)x, strlen(x))
 #define fputs(x,y) puts(x)
 #define fflush(x)
-
+#define vfprintf(...)
+#define putc(...)
 #define sscanf(...) (0)
 
 static int atoi(const char *s) {
@@ -128,50 +133,64 @@ struct linux_dirent {
   char		d_name[];
 };
 typedef long intptr_t;
+typedef unsigned long uintptr_t;
 
 #ifdef __arm__ // W T F???
 #define DIRECTORY_FLAG 040000
 #else
 #define DIRECTORY_FLAG 00200000
 #endif
+#define MAX_DIR_STACK 10
+static struct dir_s {
+	int fd;
+	char buf[1024];
+	int pos, count;
+} dirstack[MAX_DIR_STACK];
 static DIR *opendir(const char *name)
 {
 	int fd = open(name, O_RDONLY | DIRECTORY_FLAG);
-	if(fd >= 0)
-		return (DIR*)(intptr_t)(fd+1);
-	return 0;
+	int i;
+	if(fd < 0)
+		return 0;
+	for(i = 0; i < MAX_DIR_STACK; i++)
+		if(dirstack[i].fd == 0) // note: make 0 invalid dir fd to skip dirstack initialization and leave it in .bss, but this is incorrect
+		{
+			dirstack[i].fd = fd;
+			dirstack[i].pos = dirstack[i].count = 0;
+			return (DIR*)&dirstack[i];
+		}
+	close(fd);
+	return NULL;
 }
 //#define __NR_readdir 89
 #define dirent linux_dirent
 static struct linux_dirent* readdir(DIR* p)
 {
-	static char dirents_buffer[2048];
 	struct linux_dirent *ret = NULL;
-	static int pos, count;
-	
-	int fd = (int)(intptr_t)p - 1;
-
+	struct dir_s *dir = (struct dir_s*)p;
 	if(!p)
 		return NULL;
-	if( pos >= count )
+
+	if( dir->pos >= dir->count )
 	{
-		count = getdents(fd, dirents_buffer, sizeof( dirents_buffer ));
-		pos = 0;
-		if( count <= 0 )
+		dir->count = getdents( dir->fd, dir->buf, sizeof( dir->buf ));
+		dir->pos = 0;
+		if( dir->count <= 0 )
 			return NULL;
 	}
 
-	ret = (struct linux_dirent*)&dirents_buffer[pos];
-	pos += ret->d_reclen;
+	ret = (struct linux_dirent*)&dir->buf[dir->pos];
+	dir->pos += ret->d_reclen;
 	return ret;
 }
 
 static void closedir(DIR *p)
 {
-	int fd = (int)(intptr_t)p - 1;
+	struct dir_s *dir = (struct dir_s*)p;
 	if(!p)
 		return;
-	close(fd);
+	close(dir->fd);
+	dir->fd = 0;
 }
 
 #define va_arg __builtin_va_arg
@@ -448,8 +467,11 @@ asm(R"(
         ldr	r3, [sp, #12]
         add	sp, sp, #16
         pop	{r11, pc}
+        )");
+#endif
 
-	.global __aeabi_uidivmod
+#ifndef __clang__
+asm(R"(.global __aeabi_uidivmod
 	__aeabi_uidivmod:
         push    { lr }
         sub     sp, sp, #4
@@ -460,8 +482,8 @@ asm(R"(
         pop     { pc }
         )");
 #endif
-#if 0
-R"(
+#if !defined __thumb__ && !defined __clang__
+asm(R"(
 	__udivmodsi4:
 	str	r4, [sp, #-8]!
 
@@ -602,11 +624,27 @@ static int divide(int dividend, int divisor, int *rem)
     return quotient;// * sign;
 }
  
-#if 0
+#ifdef __thumb__
+unsigned __attribute__((used)) __aeabi_uidiv(unsigned numerator, unsigned denominator)
+{
+	return divide(numerator, denominator, NULL);
+}
 unsigned __attribute__((used)) int __udivmodsi4(unsigned int divident, unsigned int divisor, unsigned int *remainder)
 {
 	return divide(divident, divisor, remainder);
 }
+#endif
+#ifdef __clang__
+static void __attribute__((used)) __aeabi_uidivmod(unsigned numerator, unsigned denominator)
+{
+	int rem1;
+	register int rem asm("r1");
+	register int ret asm("r0") = divide(numerator, denominator, &rem1);
+	rem = rem1;
+//	asm("mov r0,%0\n\tmov r1,%1\n\t"::"r"(ret),"r"(rem):"r0", "r1");
+}
+#endif
+#if 0
 unsigned __attribute__((used)) long long int __udivmoddi4(unsigned long long divident, unsigned long long divisor, unsigned long long *remainder)
 {
 	*remainder = 0;
@@ -628,7 +666,47 @@ static void *zcalloc(void *opaque, unsigned items, unsigned size)
 		return NULL;
 	return oldbrk;
 }
+static void *realloc(void *ptr, size_t size)
+{
+	size_t cursize = (char*)last_brk - (char*)ptr;
+	void *newptr;
+	if( size < cursize )
+		cursize = size;
+	newptr = zcalloc( NULL, 1, size );
+	if( newptr )
+		memcpy( newptr, ptr, cursize );
+	return newptr;
+}
 static void zcfree(void *opaque, void *ptr)
 {
 	// no free here, only run zip operations in forked processes!
 }
+#define malloc(x) zcalloc(NULL,1, x)
+#define free(x) (void)(x)
+#define fclose(...)
+#define fdopen(...) NULL
+#define fopen(...) NULL
+#define fwrite(...) -1
+#define fread(...) -1
+#define ferror(...) 0
+// stub, do not use
+struct tm{
+	int tm_mon, tm_min, tm_year, tm_sec, tm_hour, tm_mday;
+};
+static struct tm tm_stub;
+#define localtime(...) &tm_stub
+#define assert(x) if(!(x))puts(#x),_exit(127);
+
+char * const z_errmsg[10] = {
+    (char *)"need dictionary",     /* Z_NEED_DICT       2  */
+    (char *)"stream end",          /* Z_STREAM_END      1  */
+    (char *)"",                    /* Z_OK              0  */
+    (char *)"file error",          /* Z_ERRNO         (-1) */
+    (char *)"stream error",        /* Z_STREAM_ERROR  (-2) */
+    (char *)"data error",          /* Z_DATA_ERROR    (-3) */
+    (char *)"insufficient memory", /* Z_MEM_ERROR     (-4) */
+    (char *)"buffer error",        /* Z_BUF_ERROR     (-5) */
+    (char *)"incompatible version",/* Z_VERSION_ERROR (-6) */
+    (char *)""
+};
+
