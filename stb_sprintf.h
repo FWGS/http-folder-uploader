@@ -1107,8 +1107,9 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
             char *o = s - 8;
 #ifndef NO_DIV64
             if (n64 >= 100000000) {
-               stbsp__uint64 mod;
-               n64 = div_const_64(n64,100000000,mod);
+               stbsp__uint64 mod,div;
+               div = div_const_64(n64,100000000,mod);
+               n64 = div;
                n = (stbsp__uint32)(mod);
             } else {
                n = (stbsp__uint32)n64;
@@ -1120,9 +1121,10 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
 #endif
             if ((fl & STBSP__TRIPLET_COMMA) == 0) {
                do {
-                  stbsp__uint32 mod;
+                  stbsp__uint32 mod, div;
                   s -= 2;
-                  n = div_const(n,100,mod);
+                  div = div_const(n,100,mod);
+                  n = div;
                   *(stbsp__uint16 *)s = *(stbsp__uint16 *)&stbsp__digitpair.pair[mod * 2];
                } while (n);
             }
@@ -1132,8 +1134,9 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
                   *--s = stbsp__comma;
                   --o;
                } else {
-                  stbsp__uint32 mod;
-                  n = div_const(n,10,mod);
+                  stbsp__uint32 mod, div;
+                  div = div_const(n,10,mod);
+                  n = div;
                   *--s = (char)(mod) + '0';
                }
             }
