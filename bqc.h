@@ -2865,6 +2865,9 @@ wrapped to handle errors directly or for automatic error handling via callbacks
 #ifdef __NR_stat
 #define stat(...) syscall(__NR_stat,__VA_ARGS__)
 #endif
+#ifdef __NR_stat64
+#define stat64(...) syscall(__NR_stat64,__VA_ARGS__)
+#endif
 #ifdef __NR_statfs
 #define statfs(...) syscall(__NR_statfs,__VA_ARGS__)
 #endif
@@ -3202,7 +3205,10 @@ static inline int _main();
 #ifdef INLINEMAIN
 #define main(...) DUMMYFUNC(); static inline int _main(__VA_ARGS_)
 #endif
-__attribute__((force_align_arg_pointer)) int main(); //if we change this to inline mymain(), we can inline main
+#ifdef __x86_64__
+__attribute__((force_align_arg_pointer))
+#endif
+ int main(); //if we change this to inline mymain(), we can inline main
 void noreturn __attribute__ ((visibility ("protected")))
 _start(void){
 	register long *sp __asm__( STACK_POINTER );
