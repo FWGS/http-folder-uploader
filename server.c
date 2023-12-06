@@ -75,10 +75,12 @@ typedef void* FILE;
 #define va_end __builtin_va_end
 #define va_start __builtin_va_start
 #define recv(a,b,c,d) read(a,b,c)
-//#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
-//#define S_IFDIR 0040000
-//#define S_IFMT 00170000
-#define S_ISDIR(m) (m > 1) // WTF???
+#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
+#define S_IFDIR 0040000
+#define S_IFMT 00170000
+#undef stat
+#define stat stat64
+//#define S_ISDIR(m) (m > 1) // WTF???
 
 #define PrintWrap(...) PB_PrintString( &global_printbuf, __VA_ARGS__);write(1,global_printbuf_buffer, global_printbuf.pos);global_printbuf.pos = 0;
 
@@ -143,10 +145,10 @@ struct linux_dirent {
   uint16_t	d_reclen;
   char		d_name[];
 };
-typedef long long intptr_t;
+typedef long intptr_t;
 static DIR *opendir(const char *name)
 {
-	int fd = open(name, O_RDONLY | O_DIRECTORY);
+	int fd = open(name, O_RDONLY |040000);// 00200000);
 	if(fd >= 0)
 		return (DIR*)(intptr_t)(fd+1);
 	return 0;
@@ -193,6 +195,20 @@ static void closedir(DIR *p)
 #define STB_SPRINTF_IMPLEMENTATION
 #define STB_SPRINTF_STATIC
 #define STB_SPRINTF_NOFLOAT
+#define STB_SPRINTF_NOUNALIGNED
+#define NO_SR64
+#define NO_DIV64
+static int divide(int dividend, int divisor, int *rem);
+
+#define div_const(x,y,z) divide(x,y,&z)
+#define imod_wrap imod_wrap1
+static int imod_wrap1(int x, int y)
+{
+	int m;
+	divide(x,y, &m);
+	return m;
+}
+
 #include "stb_sprintf.h"
 #define snprintf stbsp_snprintf
 #define vsnprintf stbsp_vsnprintf
@@ -203,18 +219,20 @@ static const char *inet_ntoa( const struct in_addr x )
 	return inet_printbuf;
 }
 #ifdef __arm__
-#define du_int unsigned int
-#define su_int unsigned short
-#define di_int int
+#if 0
+#define du_int unsigned long long int
+#define su_int unsigned int
+#define di_int long long int
 typedef union 
-{	int all;
+{	unsigned long long all;
 	struct{
-		unsigned short low;
-		unsigned int high;
+		unsigned int low;
+		int high;
 	}s;
 } udwords;
 
 unsigned int __udivmodsi4(unsigned int divident, unsigned int divisor, unsigned int *remainder);
+
 du_int __attribute((optimize(0)))
 __udivmoddi4(du_int a, du_int b, du_int* rem)
 {
@@ -427,6 +445,8 @@ __udivmoddi4(du_int a, du_int b, du_int* rem)
         *rem = r.all;
     return q.all;
 }
+#endif
+#if 0
 asm(R"(
 	.global __aeabi_uldivmod
 		__aeabi_uldivmod:
@@ -449,6 +469,10 @@ asm(R"(
         ldr     r1, [sp]
         add     sp, sp, #4
         pop     { pc }
+        )");
+#endif
+#if 0
+R"(
 	__udivmodsi4:
 	str	r4, [sp, #-8]!
 
@@ -544,6 +568,61 @@ divby0:
 	bx lr
 
 )");
+#endif
+
+asm(R"(
+.global __gnu_thumb1_case_uhi
+.thumb_func
+__gnu_thumb1_case_uhi:
+	push    {r0, r1}
+	mov     r1, lr
+	lsr    r1, r1, #1
+	lsl    r0, r0, #1
+	lsl    r1, r1, #1
+	ldrh    r1, [r1, r0]
+	lsl    r1, r1, #1
+	add     lr, lr, r1
+	pop     {r0, r1}
+	bx      lr
+.global __gnu_thumb1_case_uqi
+.thumb_func
+__gnu_thumb1_case_uqi:
+	mov     r12, r1
+	mov     r1, lr
+	lsr    r1, r1, #1
+	lsl    r1, r1, #1
+	ldrb    r1, [r1, r0]
+	lsl    r1, r1, #1
+	add     lr, lr, r1
+	mov     r1, r12
+	bx      lr
+	)");
+
+static int divide(int dividend, int divisor, int *rem)
+{
+   // int sign = ((dividend < 0) ^ (divisor < 0)) ? -1 : 1;
+   // dividend = abs(dividend);
+   // divisor = abs(divisor);
+   if(divisor == 0) return 0xffffffff;
+    int quotient = 0;
+    while (dividend >= divisor) {
+        dividend -= divisor;
+        ++quotient;
+    }
+    if(rem) *rem = dividend;// * sign;
+    return quotient;// * sign;
+}
+ 
+unsigned __attribute__((used)) int __udivmodsi4(unsigned int divident, unsigned int divisor, unsigned int *remainder)
+{
+	return divide(divident, divisor, remainder);
+}
+unsigned __attribute__((used)) long long int __udivmoddi4(unsigned long long divident, unsigned long long divisor, unsigned long long *remainder)
+{
+	*remainder = 0;
+	return divide(divident, divisor, (int*)remainder);
+}
+
 
 #define time(x) 11342
 #endif
