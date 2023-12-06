@@ -38,6 +38,9 @@ static int strncasecmp(const char *s1, const char *s2, long unsigned int n)
   return tolower(*(unsigned char *) s1) - tolower(*(unsigned char *) s2);
 }
 #define INT_MAX 0x7FFFFFFFL
+#define UINT_MAX 0xFFFFFFFFL
+#define ULONG_MAX 0xFFFFFFFFL
+
 #define PATH_MAX 4096
 #define SEEK_SET 0
 typedef struct __dirstream DIR;
@@ -53,9 +56,12 @@ typedef void* FILE;
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_IFDIR 0040000
 #define S_IFMT 00170000
+#ifdef __arm__
 #undef stat
 #define stat stat64
-//#define S_ISDIR(m) (m > 1) // WTF???
+#else
+#define S_ISDIR(m) (m > 1) // WTF??? stat seems to be completely broken on x86_64?
+#endif
 
 #define PrintWrap(...) PB_PrintString( &global_printbuf, __VA_ARGS__);write(1,global_printbuf_buffer, global_printbuf.pos);global_printbuf.pos = 0;
 
@@ -66,7 +72,8 @@ typedef void* FILE;
 #define perror(x) puts(x)
 
 #define puts(x) write(1, (const char*)x, strlen(x))
-
+#define fputs(x,y) puts(x)
+#define fflush(x)
 
 #define sscanf(...) (0)
 
@@ -121,9 +128,15 @@ struct linux_dirent {
   char		d_name[];
 };
 typedef long intptr_t;
+
+#ifdef __arm__ // W T F???
+#define DIRECTORY_FLAG 040000
+#else
+#define DIRECTORY_FLAG 00200000
+#endif
 static DIR *opendir(const char *name)
 {
-	int fd = open(name, O_RDONLY |040000);// 00200000);
+	int fd = open(name, O_RDONLY | DIRECTORY_FLAG);
 	if(fd >= 0)
 		return (DIR*)(intptr_t)(fd+1);
 	return 0;
@@ -170,6 +183,7 @@ static void closedir(DIR *p)
 #define STB_SPRINTF_IMPLEMENTATION
 #define STB_SPRINTF_STATIC
 #define STB_SPRINTF_NOFLOAT
+#ifdef __arm__
 #define STB_SPRINTF_NOUNALIGNED
 #define NO_SR64
 #define NO_DIV64
@@ -183,7 +197,7 @@ static int imod_wrap1(int x, int y)
 	divide(x,y, &m);
 	return m;
 }
-
+#endif
 #include "stb_sprintf.h"
 #define snprintf stbsp_snprintf
 #define vsnprintf stbsp_vsnprintf
@@ -602,3 +616,19 @@ unsigned __attribute__((used)) long long int __udivmoddi4(unsigned long long div
 
 #define time(x) 11342
 #endif
+static void *last_brk;
+static void *zcalloc(void *opaque, unsigned items, unsigned size)
+{
+	void *oldbrk;
+	if(!last_brk)
+		last_brk = (void*)brk( NULL );
+	oldbrk = last_brk;
+	last_brk = (void*)brk( (char*)last_brk + items * size );
+	if( oldbrk == last_brk )
+		return NULL;
+	return oldbrk;
+}
+static void zcfree(void *opaque, void *ptr)
+{
+	// no free here, only run zip operations in forked processes!
+}

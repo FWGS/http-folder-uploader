@@ -1,6 +1,9 @@
 // webserver.c
 // strcasestr
-#define NO_ZIP
+#define NO_ZIPFLOW
+#define INCLUDE_SUNZIP
+#define INCLUDE_ZLIB
+#define JUST_DEFLATE
 //#define NO_FORK
 #define NO_LIBC
 
@@ -868,7 +871,7 @@ static void serve_path_dav(const char *path, int fd)
 	//write(1, resp_dir, len_dir);
 	writeall( fd, resp_buffer, resp.pos );
 }
-#ifndef NO_ZIP
+#ifndef NO_SUNZIP
 #include "sunzip_integration.h"
 static char sunzip_root[1024];
 static char *sunzip_root_end;
@@ -909,7 +912,7 @@ sunzip_file_out sunzip_openout(const char *filename)
 #endif
 static void SV_PutZip(int fd, const char *path, int clen )
 {
-#ifndef NO_ZIP
+#ifndef NO_SUNZIP
 	while(path[0] == '/')path++;
 	sunzip_root_end = &sunzip_root[S_strncpy( sunzip_root, path, 1023 )];
 	sunzip_len = clen;
@@ -1329,7 +1332,7 @@ int main() {
 			}
 			else if(!strncmp(path, "/zip/", 5))
 			{
-#ifndef NO_ZIP
+#ifndef NO_ZIPFLOW
 				FILE *f = fdopen( newsockfd, "wb" );
 				ZIP *zip = zip_open( f, 1 );
 				char *p;
@@ -1609,3 +1612,16 @@ int main() {
 	close(sockfd);
 	return 0;
 }
+#ifdef INCLUDE_SUNZIP
+#define OF(x) x
+#include "sunzip.c"
+#endif
+#ifdef INCLUDE_ZLIB
+#include "zlib/infback.c"
+#undef PULLBYTE
+#include "zlib/inffast.c"
+#include "zlib/inflate.c"
+#include "zlib/inftrees.c"
+#undef word
+#include "zlib/crc32.c"
+#endif
