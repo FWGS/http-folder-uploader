@@ -346,6 +346,16 @@ static STBSP__ASAN stbsp__uint32 stbsp__strlen_limited(char const *s, stbsp__uin
    return (stbsp__uint32)(sn - s);
 }
 
+#ifndef div_const
+#define div_const(x,y,z) x/y,z=x%y
+#endif
+#ifndef div_const_64
+#define div_const_64 div_const
+#endif
+#ifndef imod_wrap
+#define imod_wrap(x,y) ((x) % (y))
+#endif
+
 STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback, void *user, char *buf, char const *fmt, va_list va)
 {
    static char hex[] = "0123456789abcdefxp";
@@ -1035,7 +1045,11 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
          // convert to string
          for (;;) {
             *--s = h[n64 & ((1 << (l >> 8)) - 1)];
+#ifdef NO_SR64
+			n64 = (unsigned int)(((unsigned int)n64) >> (l >> 8));
+#else
             n64 >>= (l >> 8);
+#endif
             if (!((n64) || ((stbsp__int32)((num + STBSP__NUMSZ) - s) < pr)))
                break;
             if (fl & STBSP__TRIPLET_COMMA) {
@@ -1091,18 +1105,25 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
          for (;;) {
             // do in 32-bit chunks (avoid lots of 64-bit divides even with constant denominators)
             char *o = s - 8;
+#ifndef NO_DIV64
             if (n64 >= 100000000) {
-               n = (stbsp__uint32)(n64 % 100000000);
-               n64 /= 100000000;
+               stbsp__uint64 mod;
+               n64 = div_const_64(n64,100000000,mod);
+               n = (stbsp__uint32)(mod);
             } else {
                n = (stbsp__uint32)n64;
                n64 = 0;
             }
+#else
+			n = (stbsp__uint32)n64;
+			n64 = 0;
+#endif
             if ((fl & STBSP__TRIPLET_COMMA) == 0) {
                do {
+                  stbsp__uint32 mod;
                   s -= 2;
-                  *(stbsp__uint16 *)s = *(stbsp__uint16 *)&stbsp__digitpair.pair[(n % 100) * 2];
-                  n /= 100;
+                  n = div_const(n,100,mod);
+                  *(stbsp__uint16 *)s = *(stbsp__uint16 *)&stbsp__digitpair.pair[mod * 2];
                } while (n);
             }
             while (n) {
@@ -1111,8 +1132,9 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
                   *--s = stbsp__comma;
                   --o;
                } else {
-                  *--s = (char)(n % 10) + '0';
-                  n /= 10;
+                  stbsp__uint32 mod;
+                  n = div_const(n,10,mod);
+                  *--s = (char)(mod) + '0';
                }
             }
             if (n64 == 0) {
@@ -1207,7 +1229,7 @@ STBSP__PUBLICDEF int STB_SPRINTF_DECORATE(vsprintfcb)(STBSP_SPRINTFCB *callback,
             // copy leading zeros
             c = cs >> 24;
             cs &= 0xffffff;
-            cs = (fl & STBSP__TRIPLET_COMMA) ? ((stbsp__uint32)(c - ((pr + cs) % (c + 1)))) : 0;
+            cs = (fl & STBSP__TRIPLET_COMMA) ? ((stbsp__uint32)(c - imod_wrap((pr + cs), (c + 1)))) : 0;
             while (pr > 0) {
                stbsp__cb_buf_clamp(i, pr);
                pr -= i;
