@@ -471,8 +471,18 @@ asm(R"(
 #endif
 
 #ifndef __clang__
-asm(R"(.global __aeabi_uidivmod
+asm(R"(
+    .global __aeabi_uidivmod
 	__aeabi_uidivmod:
+        push    { lr }
+        sub     sp, sp, #4
+        mov     r2, sp
+        bl      __udivmodsi4
+        ldr     r1, [sp]
+        add     sp, sp, #4
+        pop     { pc }
+    .global __aeabi_uidivmod
+	__aeabi_idivmod:
         push    { lr }
         sub     sp, sp, #4
         mov     r2, sp
@@ -654,17 +664,21 @@ unsigned __attribute__((used)) long long int __udivmoddi4(unsigned long long div
 
 #define time(x) 11342
 #endif
-static void *last_brk;
+#define ALLOC_ALIGN 8U
+
+static void *last_brk, *last_ptr;
 static void *zcalloc(void *opaque, unsigned items, unsigned size)
 {
 	void *oldbrk;
+	unsigned int sz = (items * size + (ALLOC_ALIGN - 1)) & ~(ALLOC_ALIGN - 1);
 	if(!last_brk)
 		last_brk = (void*)brk( NULL );
 	oldbrk = last_brk;
-	last_brk = (void*)brk( (char*)last_brk + items * size );
+	oldbrk = (void*)((((uintptr_t)oldbrk) + (ALLOC_ALIGN - 1)) & ~(ALLOC_ALIGN - 1 ));
+	last_brk = (void*)brk( (char*)last_brk + sz );
 	if( oldbrk == last_brk )
 		return NULL;
-	return oldbrk;
+	return (last_ptr = oldbrk);
 }
 static void *realloc(void *ptr, size_t size)
 {
@@ -672,6 +686,12 @@ static void *realloc(void *ptr, size_t size)
 	void *newptr;
 	if( size < cursize )
 		cursize = size;
+	if(ptr == last_ptr) // extend current break
+	{
+		if(cursize > size)
+			last_brk = (void*)brk( (char*)last_brk + size - cursize );
+		return ptr;
+	}
 	newptr = zcalloc( NULL, 1, size );
 	if( newptr )
 		memcpy( newptr, ptr, cursize );
@@ -679,6 +699,9 @@ static void *realloc(void *ptr, size_t size)
 }
 static void zcfree(void *opaque, void *ptr)
 {
+	// only allow "canceling" last allocation
+	if(ptr == last_ptr)
+		last_brk = last_ptr, last_ptr = NULL;
 	// no free here, only run zip operations in forked processes!
 }
 #define malloc(x) zcalloc(NULL,1, x)
