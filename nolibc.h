@@ -16,6 +16,9 @@ static int memcmp(const void* buf1,
 //#define memcmp __builtin_memcmp
 #define va_list __builtin_va_list
 //#define __NR_accept 43
+#ifdef __aarch64__
+#define __NR_fstatat 79
+#endif
 #include "bqc.h"
 #undef tolower
 #define tolower(x) (((x) > 96) && ((x) < 123)?((x) ^ 0x20):(x))
@@ -53,18 +56,41 @@ typedef void* FILE;
 #define va_end __builtin_va_end
 #define va_start __builtin_va_start
 #define recv(a,b,c,d) read(a,b,c)
-
-#ifdef __arm__
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_IFDIR 0040000
 #define S_IFMT 00170000
 #define S_IFREG  0100000
+
+#ifdef fstatat
+//#define stat stat64
+#define stat(x,y) fstatat(-100,x,y,0)
+#else
+#if defined __arm__ || defined __aarch64__
 #undef stat
 #define stat stat64
 #else
 #define S_ISDIR(m) (m > 1) // WTF??? stat seems to be completely broken on x86_64?
 #define S_IFREG  1
 #define S_IFMT 1
+#endif
+#endif
+#ifndef open
+#define open(...) openat(-100, __VA_ARGS__)
+#endif
+#ifndef unlink
+#define unlink(x) unlinkat(-100,x)
+#endif
+#ifndef time
+#define time(x) 11342
+#endif
+#ifndef mkdir
+#define mkdir(x,y) mkdirat(-100,x,y);
+#endif
+#ifndef rename
+#define rename(x,y) renameat(-100,x,-100,y)
+#endif
+#ifndef fork
+#define fork()  clone( NULL, NULL, 17, NULL, NULL, NULL, NULL )
 #endif
 #ifndef NO_LOG
 #define PrintWrap(...) PB_PrintString( &global_printbuf, __VA_ARGS__);write(1,global_printbuf_buffer, global_printbuf.pos);global_printbuf.pos = 0;
@@ -129,15 +155,23 @@ static int strcmp(const char* s1, const char* s2)
 }
 
 struct linux_dirent {
+#ifdef getdents
   uint32_t	d_ino;
   off_t		d_off;
   uint16_t	d_reclen;
+#else
+  uint64_t        d_ino;
+  int64_t        d_off;
+  unsigned short d_reclen;
+  unsigned char  d_type;
+#define getdents getdents64
+#endif
   char		d_name[];
 };
 typedef long intptr_t;
 typedef unsigned long uintptr_t;
 
-#ifdef __arm__ // W T F???
+#if defined __arm__ || defined __aarch64__ // W T F???
 #define DIRECTORY_FLAG 040000
 #else
 #define DIRECTORY_FLAG 00200000
@@ -230,8 +264,6 @@ static const char *inet_ntoa( const struct in_addr x )
 }
 #ifdef __arm__
 #include "armeabi.h"
-
-#define time(x) 11342
 #endif
 #define ALLOC_ALIGN 8U
 
@@ -281,6 +313,7 @@ static void zcfree(void *opaque, void *ptr)
 #define fwrite(...) -1
 #define fread(...) -1
 #define ferror(...) 0
+
 // stub, do not use
 struct tm{
 	int tm_mon, tm_min, tm_year, tm_sec, tm_hour, tm_mday;

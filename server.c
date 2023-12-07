@@ -950,7 +950,11 @@ static void SV_Put(int newsockfd, const char *uri, int clen )
 		return;
 	}
 	if(strncmp(path, "/files/", 7) || strstr(path, ".."))
+#ifndef NO_FORK
 		_exit(1);
+#else
+		return;
+#endif
 
 	path += 7;
 	while(path[0] == '/')path++;
@@ -1379,7 +1383,10 @@ int main() {
 			}
 			else
 			{
-				int r = fork();
+				int r = 0;
+#ifndef NO_FORK
+				r =fork();
+#endif
 				if( r == 0 )
 				{
 					char *rng = strcasestr( buffer, "\nrange: bytes=" );

@@ -31,7 +31,7 @@
 #elif defined (__i386__)
 	#define ARCH_DATA	"esp","int $128","eax","eax","ebx","ecx","edx","esi","edi","ebp","0", "memory"
 #elif defined (__aarch64__)
-	#define ARCH_DATA	"x31","svc 0",   "x8", "x0", "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x9", "x10", "x11", "x12", "x13","x14", "x15", "x16", "x17", "x18", "memory"
+	#define ARCH_DATA	"sp","svc 0",   "x8", "x0", "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x9", "x10", "x11", "x12", "x13","x14", "x15", "x16", "x17", "x18", "memory"
 #elif defined (__arm__)
 	#define ARCH_DATA	"r13","swi 0x0", "r7", "r0", "r0", "r1", "r2", "r3", "r4", "r5", "r6", "memory"
 #elif defined (__alpha__) //* also returns error on $19 */
@@ -1607,7 +1607,7 @@ struct timespec{
     time_t tv_sec;
     long tv_nsec;
 };
-
+#ifndef __aarch64__
 struct ucontext {
 	ulong uc_flags;
 	struct ucontext *uc_link;
@@ -1615,6 +1615,7 @@ struct ucontext {
 	struct sigcontext uc_mcontext;
 	sigset_t uc_sigmask;
 };
+#endif
 
 struct winsize {
 	u16 ws_row;
@@ -2225,6 +2226,9 @@ wrapped to handle errors directly or for automatic error handling via callbacks
 #endif
 #ifdef __NR_fstat
 #define fstat(...) syscall(__NR_fstat,__VA_ARGS__)
+#endif
+#ifdef __NR_fstatat
+#define fstatat(...) syscall(__NR_fstatat,__VA_ARGS__)
 #endif
 #ifdef __NR_fstatfs
 #define fstatfs(...) syscall(__NR_fstatfs,__VA_ARGS__)
