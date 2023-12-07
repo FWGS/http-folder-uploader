@@ -270,6 +270,8 @@ asm(R"(
 // arm long division
 #if !defined __thumb__ && !defined __clang__
 asm(R"(
+	
+	.global __udivmodsi4
 	__udivmodsi4:
 	str	r4, [sp, #-8]!
 
@@ -368,7 +370,7 @@ divby0:
 #endif
 
 // gcc generates compressed thumb switches sometimes
-#ifndef __clang__
+#if !defined __clang__ && defined __thumb__
 asm(R"(
 .global __gnu_thumb1_case_uhi
 .thumb_func

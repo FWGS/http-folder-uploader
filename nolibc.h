@@ -22,7 +22,7 @@ static int memcmp(const void* buf1,
 #include "bqc.h"
 #undef tolower
 #define tolower(x) (((x) > 96) && ((x) < 123)?((x) ^ 0x20):(x))
-static int strncasecmp(const char *s1, const char *s2, long unsigned int n)
+static __attribute__((hot)) int strncasecmp(const char *s1, const char *s2, long unsigned int n)
 {
   if (n == 0)
     return 0;
@@ -127,7 +127,7 @@ static int atoi(const char *s) {
     return (factor * acum);
 }
 
-static char* strcasestr(const char* haystack, const char* needle)
+static __attribute__((hot)) char* strcasestr(const char* haystack, const char* needle)
 {
     char nch;
     char hch;
@@ -144,7 +144,7 @@ static char* strcasestr(const char* haystack, const char* needle)
     }
     return (char*)(haystack);
 }
-static int strcmp(const char* s1, const char* s2)
+static __attribute__((hot)) int strcmp(const char* s1, const char* s2)
 {
     while(*s1 && (*s1 == *s2))
     {
