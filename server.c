@@ -7,6 +7,7 @@
 #define JUST_DEFLATE
 //#define NO_FORK
 #define NO_LIBC
+#define NO_LOG
 
 #ifndef NO_LIBC
 #define _GNU_SOURCE
@@ -24,10 +25,15 @@
 #include <stdarg.h>
 #include <time.h>
 #include <strings.h>
+#else
+#include "nolibc.h"
+#endif
+#ifndef NO_LOG
 #define Error(...) fprintf(stderr, __VA_ARGS__)
 #define Report(...) fprintf(stderr, __VA_ARGS__)
 #else
-#include "nolibc.h"
+#define Error(...)
+#define Report(...)
 #endif
 
 #define PORT 8080
@@ -41,7 +47,7 @@ typedef struct printbuffer_s
 	size_t sz;
 } printbuffer_t;
 void PB_PrintString( printbuffer_t *pb, const char *fmt, ... );
-#ifdef NO_LIBC
+#if definded NO_LIBC && !defined NO_LOG
 static char global_printbuf_buffer[1024];
 static printbuffer_t global_printbuf = {global_printbuf_buffer, 0, 1024};
 #endif
@@ -1145,7 +1151,6 @@ static int zflow_write(void *fd, const void *ptr, size_t len)
 	return writeall((int)fd,ptr,len) != len;
 }
 
-//__attribute__((force_align_arg_pointer)) 
 int main() {
 	char buffer[BUFFER_SIZE] = { };
 
@@ -1635,5 +1640,7 @@ int main() {
 #include "zlib/trees.c"
 #include "zlib/adler32.c"
 #endif
+#if defined INCLUDE_SUNZIP || defined INCLUDE_ZIPFLOW
 #undef word
 #include "zlib/crc32.c"
+#endif

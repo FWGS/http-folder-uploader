@@ -66,16 +66,18 @@ typedef void* FILE;
 #define S_IFREG  1
 #define S_IFMT 1
 #endif
-
+#ifndef NO_LOG
 #define PrintWrap(...) PB_PrintString( &global_printbuf, __VA_ARGS__);write(1,global_printbuf_buffer, global_printbuf.pos);global_printbuf.pos = 0;
-
+#define puts(x) write(1, (const char*)x, strlen(x))
+#else
+#define PrintWrap(...) (0)
+#define puts(x) (0)
+#endif
 #define printf(...) PrintWrap(__VA_ARGS__)
-#define Error(...) PrintWrap(__VA_ARGS__)
-#define Report(...) PrintWrap(__VA_ARGS__)
+#define fprintf(x,...) PrintWrap(__VA_ARGS__)
 
 #define perror(x) puts(x)
 
-#define puts(x) write(1, (const char*)x, strlen(x))
 #define fputs(x,y) puts(x)
 #define fflush(x)
 #define vfprintf(...)
