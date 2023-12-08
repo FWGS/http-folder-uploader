@@ -935,6 +935,31 @@ static void SV_PutZip(int fd, const char *path, int clen )
 	writeall( fd, sunzip_output, sunzip_printb.pos );
 #endif
 }
+#define htoi(x) (9 * (x >> 6) + (x & 017))
+static unsigned int S_htoi(const char *s) {
+#if 0
+    unsigned int acum = 0;
+    char c;;
+
+    while(((c = *s) >= '0')&&(c <= '9') ||(c >= 'A')&&(c <= 'F')) {
+      if(c > 57) c-= 8;
+      acum = acum << 4;
+      acum = acum + (c - 48);
+      s++;
+    }
+    return acum;
+#else
+	unsigned int acum = 0;
+
+	while(*s >= '0')
+	{
+		acum <<= 4;
+		acum += htoi(*s);
+		s++;
+	}
+	return acum;
+#endif
+}
 
 
 static void SV_Put(int newsockfd, const char *uri, int clen )
@@ -1000,8 +1025,7 @@ static void SV_PutChunked( int newsockfd, const char *uri, int explen )
 			break;
 		printf("chunk hex %s\n", chunkstr);
 
-		if( sscanf( chunkstr, "%x", &chunklen ) != 1 )
-			break;
+		chunklen = S_htoi( chunkstr );
 
 		printf("chunk len %d\n", chunklen);
 		if(!chunklen)
@@ -1394,10 +1418,11 @@ int main() {
 					puts(buffer);
 					if( rng )
 					{
-						int start, end;
+						char *rng1;
 						rng += sizeof( "\nrange: bytes" );
-						sscanf( rng, "%d-%d", &start, &end );
-						serve_file_range(path, newsockfd, "application/octet-stream", start, end );
+						rng1 = strchr(rng, '-');
+						if(rng1)
+							serve_file_range(path, newsockfd, "application/octet-stream", atoi(rng), atoi(rng1));
 					}
 					else
 						serve_file(path, newsockfd, "application/octet-stream", 1);
