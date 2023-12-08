@@ -1539,8 +1539,13 @@ typedef struct sigaltstack {
 struct stat {
 	unsigned long	st_dev;	
 	unsigned long	st_ino;	
-	unsigned long	st_mode;
+#ifdef __x86_64__
 	unsigned int	st_nlink;
+#endif
+	unsigned long	st_mode;
+#ifndef __x86_64__
+	unsigned int	st_nlink;
+#endif
 	unsigned int	st_uid;	
 	unsigned int	st_gid;	
 	unsigned int	st_rdev;
@@ -2226,9 +2231,6 @@ wrapped to handle errors directly or for automatic error handling via callbacks
 #endif
 #ifdef __NR_fstat
 #define fstat(...) syscall(__NR_fstat,__VA_ARGS__)
-#endif
-#ifdef __NR_fstatat
-#define fstatat(...) syscall(__NR_fstatat,__VA_ARGS__)
 #endif
 #ifdef __NR_fstatfs
 #define fstatfs(...) syscall(__NR_fstatfs,__VA_ARGS__)

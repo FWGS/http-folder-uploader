@@ -16,9 +16,6 @@ static int memcmp(const void* buf1,
 //#define memcmp __builtin_memcmp
 #define va_list __builtin_va_list
 //#define __NR_accept 43
-#ifdef __aarch64__
-#define __NR_fstatat 79
-#endif
 #include "bqc.h"
 #undef tolower
 #define tolower(x) (((x) > 96) && ((x) < 123)?((x) ^ 0x20):(x))
@@ -61,17 +58,13 @@ typedef void* FILE;
 #define S_IFMT 00170000
 #define S_IFREG  0100000
 
-#ifdef fstatat
-//#define stat stat64
-#define stat(x,y) fstatat(-100,x,y,0)
+#ifdef newfstatat
+#define stat stat64
+#define stat(x,y) newfstatat(-100,x,y,0)
 #else
-#if defined __arm__ || defined __aarch64__
+#if defined __arm__
 #undef stat
 #define stat stat64
-#else
-#define S_ISDIR(m) (m > 1) // WTF??? stat seems to be completely broken on x86_64?
-#define S_IFREG  1
-#define S_IFMT 1
 #endif
 #endif
 #ifndef open
@@ -81,7 +74,7 @@ typedef void* FILE;
 #define unlink(x) unlinkat(-100,x)
 #endif
 #ifndef time
-#define time(x) 11342
+#define time(x) 1702051671
 #endif
 #ifndef mkdir
 #define mkdir(x,y) mkdirat(-100,x,y);
