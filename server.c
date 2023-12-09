@@ -4,6 +4,9 @@
 #define INCLUDE_ZIPFLOW
 #define INCLUDE_SUNZIP
 #define INCLUDE_ZLIB
+#ifdef INCLUDE_PAGE
+#include "include_page.h"
+#endif
 #define JUST_DEFLATE
 //#define NO_FORK
 #define NO_LIBC
@@ -1403,7 +1406,14 @@ int main() {
 			}
 			else if(strncmp(path, "/files/", 7))
 			{
+#ifdef INCLUDE_PAGE
+				WriteStringLit(newsockfd, "HTTP/1.1 200 OK\r\n"
+										  "Server: webserver-c\r\n"
+										  "Content-type: text/html\r\n\r\n");
+				WriteStringLit(newsockfd, page_content);
+#else
 				serve_file("folderupload.html", newsockfd, "text/html", 1);
+#endif
 			}
 			else
 			{
