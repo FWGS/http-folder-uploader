@@ -16,6 +16,7 @@ static int memcmp(const void* buf1,
 //#define memcmp __builtin_memcmp
 #define va_list __builtin_va_list
 //#define __NR_accept 43
+#define INLINEMAIN
 #include "bqc.h"
 #undef tolower
 #define tolower(x) (((x) > 96) && ((x) < 123)?((x) ^ 0x20):(x))

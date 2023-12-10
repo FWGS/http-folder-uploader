@@ -33,7 +33,7 @@
 #elif defined (__aarch64__)
 	#define ARCH_DATA	"sp","svc 0",   "x8", "x0", "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x9", "x10", "x11", "x12", "x13","x14", "x15", "x16", "x17", "x18", "memory"
 #elif defined (__arm__)
-	#define ARCH_DATA	"r13","swi 0x0", "r7", "r0", "r0", "r1", "r2", "r3", "r4", "r5", "r6", "memory"
+	#define ARCH_DATA	"sp","swi 0x0", "r7", "r0", "r0", "r1", "r2", "r3", "r4", "r5", "r6", "memory"
 #elif defined (__alpha__) //* also returns error on $19 */
 	//#define ARCH_DATA	"sp","syscall",  "v0", "v0", "a0", "a1", "a2", "a3", "a4", "a5", "a6", "memory"
 	/* older way */
@@ -3214,21 +3214,27 @@ static inline __attribute__((always_inline)) char *strstr(const char *h, const c
  * Todo: check -mpush-args or -mno-accumulate outgoing args*/
 static inline int _main();
 #ifdef INLINEMAIN
-#define main(...) DUMMYFUNC(); static inline int _main(__VA_ARGS_)
+#define main(...) DUMMYFUNC(); static inline int _main(__VA_ARGS__)
 #endif
 #ifdef __x86_64__
 __attribute__((force_align_arg_pointer))
+#endif
+// workaround pushing stack pointer before reading *sp
+#if defined(__arm__) || defined(__aarch64__)
+#define STACK_ARG_OFFSET 2
+#else
+#define STACK_ARG_OFFSET 1
 #endif
  int main(); //if we change this to inline mymain(), we can inline main
 void noreturn __attribute__ ((visibility ("protected")))
 _start(void){
 	register long *sp __asm__( STACK_POINTER );
-	long argc = *sp;
-	char **argv = (char**)sp+1;
+	register long argc = *(sp+STACK_ARG_OFFSET);
+	register char **argv = (char**)sp+STACK_ARG_OFFSET+1;
 #ifdef NO_GLOBAL_VARS
 	char **environ;
 #endif
-	environ = (char**)sp+1+argc;
+	environ = (char**)sp+STACK_ARG_OFFSET+1+argc;
 #ifdef INLINEMAIN
 	(void)exit(_main(argc,argv,environ) );
 #else
