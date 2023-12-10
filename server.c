@@ -50,7 +50,7 @@ typedef struct printbuffer_s
 	size_t sz;
 } printbuffer_t;
 void PB_PrintString( printbuffer_t *pb, const char *fmt, ... );
-#if definded NO_LIBC && !defined NO_LOG
+#if defined(NO_LIBC) && !defined(NO_LOG)
 static char global_printbuf_buffer[1024];
 static printbuffer_t global_printbuf = {global_printbuf_buffer, 0, 1024};
 #endif
@@ -1182,11 +1182,20 @@ static int zflow_write(void *fd, const void *ptr, size_t len)
 	return writeall((int)fd,ptr,len) != len;
 }
 
-int main() {
+int main(int argc, char **argv, char **envp) {
 	char buffer[BUFFER_SIZE] = { };
+	int sockfd;
+	unsigned short port = PORT;
+
+	//printf("%d %p %p\n", argc, argv, envp);
+	if(argc == 3)
+	{
+		chdir(argv[1]);
+		port = atoi(argv[2]);
+	}
 
 	// Create a socket
-	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd == -1) {
 		perror("webserver (socket)");
 		return 1;
@@ -1201,7 +1210,7 @@ int main() {
 	int host_addrlen = sizeof(host_addr);
 
 	host_addr.sin_family = AF_INET;
-	host_addr.sin_port = htons(PORT);
+	host_addr.sin_port = htons(port);
 	host_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
 	// Create client address
