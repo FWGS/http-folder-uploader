@@ -18,6 +18,23 @@ static int memcmp(const void* buf1,
 //#define __NR_accept 43
 #define INLINEMAIN
 #include "bqc.h"
+
+#ifdef FUCK_GOOGLE_YOU_ARE_COMPLETE_IDIOTS_YOU_MUST_EAT_SHIT_EVERY_GOOGLE_EMPLOYER_MUST_DIE_HARD_AND_BURN_IN_HELL_ETERNALLY
+#undef accept
+#ifdef __arm__ // fallback to keep compatibility with early kernels
+static int accept(int sockfd, struct sockaddr *addr, void *addrlen)
+{
+	int ret = syscall( __NR_accept4, sockfd, addr, addrlen, 0 );
+	if( ret == -ENOSYS )
+		ret = syscall( __NR_accept, sockfd, addr, addrlen );
+//	if( ret == -ENOSYS )
+//		ret = 0;
+	return ret;
+}
+#else
+#define accept(x,y,z) accept4(x,y,z,0)
+#endif
+#endif
 #undef tolower
 #define tolower(x) (((x) > 96) && ((x) < 123)?((x) ^ 0x20):(x))
 static __attribute__((hot)) int strncasecmp(const char *s1, const char *s2, long unsigned int n)
